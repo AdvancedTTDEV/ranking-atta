@@ -151,7 +151,7 @@ enum partidos_ronda {
   Dieciseisavos  @map("16avos")
   Octavos
   Cuartos
-  Semifinal      @map("semifinal")
+  Semifinal      @map("Semifinal")
   Final
   Campe_n        @map("Campeón")
 }
