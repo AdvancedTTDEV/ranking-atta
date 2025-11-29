@@ -47,7 +47,8 @@ export default function PartidosSection() {
                 ganadorNombre: partido.ganadorNombre,
                 torneoNombre: partido.torneoNombre,
                 ronda: partido.ronda,
-                fecha: partido.fecha
+                fecha: partido.fecha,
+                acciones: true
             }))
 
             setPartidos(parsed)
@@ -111,15 +112,20 @@ export default function PartidosSection() {
         {
             header: 'Acciones',
             accessor: 'acciones',
-            cell: (row: Partido) => (
+            render: (_value, row) => (
                 <button
-                    onClick={() => handleUndo(row.id)}
+                    onClick={(e) => {
+                        e.stopPropagation(); // evita que dispare el onRowClick
+                        handleUndo(row.id);
+                    }}
                     className="text-red-600 hover:underline"
                 >
                     Deshacer
                 </button>
-            ),
+            )
         }
+
+
     ]
 
     return (
