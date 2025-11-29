@@ -112,7 +112,7 @@ export default function PartidosSection() {
         {
             header: 'Acciones',
             accessor: 'acciones',
-            render: (_value, row) => (
+            render: (_value: unknown, row: Partido) => (
                 <button
                     onClick={(e) => {
                         e.stopPropagation(); // evita que dispare el onRowClick
