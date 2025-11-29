@@ -3,10 +3,12 @@ import { NextResponse } from 'next/server'
 
 export async function POST(
     request: Request,
-    context: { params: { id: string } }
+    context: { params: Promise<{ id: string }> }
 ) {
     try {
-        const partidoId = parseInt(context.params.id)
+        // Await the params to get the actual values
+        const params = await context.params
+        const partidoId = parseInt(params.id)
 
         if (isNaN(partidoId)) {
             return NextResponse.json(
