@@ -4,6 +4,7 @@ import DataTable from '@/components/ui/DataTable'
 import {ArrowDownIcon, PlusIcon} from '@heroicons/react/24/outline'
 import PartidoForm from '@/components/forms/PartidoForm'
 import { safeFetch } from '@/lib/api'
+import {toast} from "react-hot-toast";
 
 type Partido = {
   id: number
@@ -46,12 +47,12 @@ export default function PartidosSection() {
       // Usa directamente las propiedades que vienen del backend
     const parsed = data.partidos.map((partido: any) => ({
       id: partido.id,
-      jugador1Nombre: partido.jugador1Nombre, // ✅ Usar la propiedad directa
+      jugador1Nombre: partido.jugador1Nombre, // Usar la propiedad directa
       jugador2Nombre: partido.jugador2Nombre,
       ganadorNombre: partido.ganadorNombre,
       torneoNombre: partido.torneoNombre,
       ronda: partido.ronda,
-      fecha: partido.fecha // ✅ Ya viene formateada desde el backend
+      fecha: partido.fecha // Ya viene formateada desde el backend
     }))
     
     setPartidos(parsed)
@@ -84,19 +85,52 @@ export default function PartidosSection() {
         setSelectedTorneoId(e.target.value)
         setCurrentPage(1) // 🔄 Resetear a primera página
     }
+    const handleUndo = async (id: number) => {
+        if (!confirm("¿Revertir este partido?")) return
+
+        try {
+            const res = await fetch(`/api/partidos/${id}/revert`, {
+                method: 'POST'
+            })
+
+            if (res.ok) {
+                toast.success('Partido revertido')
+                fetchPartidos(currentPage, itemsPerPage)
+            } else {
+                toast.error('Error al revertir')
+            }
+
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        } catch (err) {
+            toast.error('Error de conexión')
+        }
+    }
 
 
     const columns = [
-    { header: 'ID', accessor: 'id', sortable: true},
-    { header: 'Jugador 1', accessor: 'jugador1Nombre' },
-    { header: 'Jugador 2', accessor: 'jugador2Nombre' },
-    { header: 'Ganador', accessor: 'ganadorNombre' },
-    {header: 'Ronda', accessor: 'ronda'},
-    { header: 'Torneo', accessor: 'torneoNombre' },
-    { header: 'Fecha', accessor: 'fecha' },
-  ]
+        { header: 'ID', accessor: 'id' },
+        { header: 'Jugador 1', accessor: 'jugador1Nombre' },
+        { header: 'Jugador 2', accessor: 'jugador2Nombre' },
+        { header: 'Ganador', accessor: 'ganadorNombre' },
+        { header: 'Ronda', accessor: 'ronda' },
+        { header: 'Torneo', accessor: 'torneoNombre' },
+        { header: 'Fecha', accessor: 'fecha' },
+        {
+            header: 'Acciones',
+            accessor: 'acciones',
+            cell: (row: never) => (
+                <button
+                    onClick={() => handleUndo(row.id)}
+                    className="text-red-600 hover:underline"
+                >
+                    Deshacer
+                </button>
+            ),
+        }
+    ]
 
-  return (
+
+    return (
     <div className="bg-white rounded-lg shadow p-4">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-bold">Partidos</h2>
