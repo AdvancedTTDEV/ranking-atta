@@ -145,7 +145,37 @@ export default function JugadoresSection({ className = '' }: { className?: strin
       sortable: true,
     },
 
-    { header: 'ELO', accessor: 'elo', sortable: true },
+      {
+          header: 'ELO',
+          accessor: 'elo',
+          render: (elo: number, row: Jugador) => {
+              if (editingJugadorId === row.id && editingField === 'elo') {
+                  return (
+                      <input
+                          type="number"
+                          value={editingValue}
+                          autoFocus
+                          onChange={(e) => setEditingValue(Number(e.target.value))}
+                          onBlur={handleEditSave}
+                          onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleEditSave();
+                          }}
+                          className="border rounded px-1 py-0.5 w-full"
+                      />
+                  );
+              }
+
+              return (
+                  <span
+                      onClick={() => handleEditStart(row.id, 'elo', elo)}
+                      className="cursor-pointer hover:underline"
+                  >
+        {elo}
+      </span>
+              );
+          },
+          sortable: true,
+      },
     {
       header: 'Club',
       accessor: 'clubes',
