@@ -42,15 +42,13 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
         setIsLoading(true)
         const [jugadoresRes, torneosRes] = await Promise.all([
           fetch('/api/jugadores?all=true'),
-          fetch('/api/torneos')
+          fetch('/api/torneos?all=true')
         ])
 
-        // FIX: Handle jugadores response format
         const jugadoresData = await jugadoresRes.json()
         const jugadoresArray = jugadoresData.jugadores || jugadoresData.data || []
         setJugadores(Array.isArray(jugadoresArray) ? jugadoresArray : [])
 
-        // FIX: Handle torneos response format
         const torneosData = await torneosRes.json()
         const torneosArray = torneosData.torneos || torneosData.data || []
         setTorneos(Array.isArray(torneosArray) ? torneosArray : [])
@@ -68,7 +66,14 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
     fetchData()
   }, [])
 
-  // Filter players based on search input
+  // ✅ AUTO-SELECCIONAR EL TORNEO MÁS RECIENTE
+  useEffect(() => {
+    if (torneos.length > 0 && !torneoId) {
+      setTorneoId(torneos[0].id.toString())
+    }
+  }, [torneos, torneoId])
+
+  // Filter players
   const filteredPlayers1 = useMemo(() => {
     if (!jugador1Search) return jugadores
     return jugadores.filter(player =>
@@ -83,10 +88,11 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
         .filter(j => j.id !== parseInt(jugador1Id || '0'))
         .filter(player =>
             player.nombre.toLowerCase().includes(jugador2Search.toLowerCase()) ||
-            player.elo.toString().includes(jugador2Search))
+            player.elo.toString().includes(jugador2Search)
+        )
   }, [jugadores, jugador2Search, jugador1Id])
 
-  // Update winner when players change
+  // Auto winner if only one player
   useEffect(() => {
     if (jugador1Id && !jugador2Id) {
       setGanadorId(jugador1Id)
@@ -109,9 +115,7 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
     try {
       const response = await fetch('/api/partidos', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(partidoData)
       })
 
@@ -122,7 +126,7 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
         const errorData = await response.json()
         toast.error(errorData.message || 'Error al registrar partido')
       }
-    } catch (error) {
+    } catch {
       toast.error('Error de conexión')
     } finally {
       setIsSubmitting(false)
@@ -131,6 +135,8 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
 
   return (
       <form onSubmit={handleSubmit} className="space-y-4">
+
+        {/* TORNEO */}
         <div>
           <label htmlFor="torneo" className="block text-sm font-medium text-gray-700">
             Torneo
@@ -158,15 +164,14 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
           </select>
         </div>
 
+        {/* JUGADORES */}
         <div className="grid grid-cols-2 gap-4">
-          {/* Player 1 Searchable Dropdown */}
           <div className="relative">
-            <label htmlFor="jugador1" className="block text-sm font-medium text-gray-700">
+            <label className="block text-sm font-medium text-gray-700">
               Jugador 1
             </label>
             <input
                 type="text"
-                id="jugador1"
                 value={jugador1Search}
                 onChange={(e) => {
                   setJugador1Search(e.target.value)
@@ -179,32 +184,30 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
                 required
             />
             {showPlayer1Results && filteredPlayers1.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto">
-                  {filteredPlayers1.map(jugador => (
+                <div className="absolute z-10 mt-1 w-full bg-white border rounded-md shadow max-h-60 overflow-auto">
+                  {filteredPlayers1.map(j => (
                       <div
-                          key={jugador.id}
+                          key={j.id}
                           className="p-2 hover:bg-gray-100 cursor-pointer"
                           onMouseDown={() => {
-                            setJugador1Id(jugador.id.toString())
-                            setJugador1Search(jugador.nombre)
+                            setJugador1Id(j.id.toString())
+                            setJugador1Search(j.nombre)
                             setShowPlayer1Results(false)
                           }}
                       >
-                        id({jugador.id}) {jugador.nombre} {jugador.elo} puntos
+                        id({j.id}) {j.nombre} {j.elo} puntos
                       </div>
                   ))}
                 </div>
             )}
           </div>
 
-          {/* Player 2 Searchable Dropdown */}
           <div className="relative">
-            <label htmlFor="jugador2" className="block text-sm font-medium text-gray-700">
+            <label className="block text-sm font-medium text-gray-700">
               Jugador 2 (opcional)
             </label>
             <input
                 type="text"
-                id="jugador2"
                 value={jugador2Search}
                 onChange={(e) => {
                   setJugador2Search(e.target.value)
@@ -216,7 +219,7 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
                 className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
             />
             {showPlayer2Results && filteredPlayers2.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto">
+                <div className="absolute z-10 mt-1 w-full bg-white border rounded-md shadow max-h-60 overflow-auto">
                   <div
                       className="p-2 hover:bg-gray-100 cursor-pointer"
                       onMouseDown={() => {
@@ -227,17 +230,17 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
                   >
                     Bye/Forfeit
                   </div>
-                  {filteredPlayers2.map(jugador => (
+                  {filteredPlayers2.map(j => (
                       <div
-                          key={jugador.id}
+                          key={j.id}
                           className="p-2 hover:bg-gray-100 cursor-pointer"
                           onMouseDown={() => {
-                            setJugador2Id(jugador.id.toString())
-                            setJugador2Search(jugador.nombre)
+                            setJugador2Id(j.id.toString())
+                            setJugador2Search(j.nombre)
                             setShowPlayer2Results(false)
                           }}
                       >
-                        id({jugador.id}) {jugador.nombre} {jugador.elo} puntos
+                        id({j.id}) {j.nombre} {j.elo} puntos
                       </div>
                   ))}
                 </div>
@@ -247,11 +250,10 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
 
         {jugador1Id && jugador2Id && (
             <div>
-              <label htmlFor="ganador" className="block text-sm font-medium text-gray-700">
+              <label className="block text-sm font-medium text-gray-700">
                 Ganador
               </label>
               <select
-                  id="ganador"
                   value={ganadorId}
                   onChange={(e) => setGanadorId(e.target.value)}
                   className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
@@ -268,14 +270,13 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
             </div>
         )}
 
-
+        {/* RESTO */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label htmlFor="ronda" className="block text-sm font-medium text-gray-700">
+            <label className="block text-sm font-medium text-gray-700">
               Ronda
             </label>
             <select
-                id="ronda"
                 value={ronda}
                 onChange={(e) => setRonda(e.target.value)}
                 className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
@@ -293,11 +294,10 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
           </div>
 
           <div>
-            <label htmlFor="tipo_especial" className="block text-sm font-medium text-gray-700">
+            <label className="block text-sm font-medium text-gray-700">
               Tipo Especial
             </label>
             <select
-                id="tipo_especial"
                 value={tipoEspecial}
                 onChange={(e) => setTipoEspecial(e.target.value)}
                 className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
