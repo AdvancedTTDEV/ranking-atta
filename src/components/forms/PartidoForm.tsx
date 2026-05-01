@@ -30,6 +30,7 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
   const [torneos, setTorneos] = useState<Torneo[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
+  // States for searchable dropdowns
   const [jugador1Search, setJugador1Search] = useState('')
   const [jugador2Search, setJugador2Search] = useState('')
   const [showPlayer1Results, setShowPlayer1Results] = useState(false)
@@ -39,10 +40,9 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
     const fetchData = async () => {
       try {
         setIsLoading(true)
-
         const [jugadoresRes, torneosRes] = await Promise.all([
           fetch('/api/jugadores?all=true'),
-          fetch('/api/torneos?all=true') // 🔥 CAMBIO AQUÍ
+          fetch('/api/torneos?all=true')
         ])
 
         const jugadoresData = await jugadoresRes.json()
@@ -66,13 +66,14 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
     fetchData()
   }, [])
 
-  // 🔥 AUTO SELECT ÚLTIMO TORNEO (más reciente)
+  // ✅ AUTO-SELECCIONAR EL TORNEO MÁS RECIENTE
   useEffect(() => {
     if (torneos.length > 0 && !torneoId) {
       setTorneoId(torneos[0].id.toString())
     }
   }, [torneos, torneoId])
 
+  // Filter players
   const filteredPlayers1 = useMemo(() => {
     if (!jugador1Search) return jugadores
     return jugadores.filter(player =>
@@ -91,6 +92,7 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
         )
   }, [jugadores, jugador2Search, jugador1Id])
 
+  // Auto winner if only one player
   useEffect(() => {
     if (jugador1Id && !jugador2Id) {
       setGanadorId(jugador1Id)
@@ -136,17 +138,18 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
 
         {/* TORNEO */}
         <div>
-          <label className="block text-sm font-medium text-gray-700">
+          <label htmlFor="torneo" className="block text-sm font-medium text-gray-700">
             Torneo
           </label>
           <select
+              id="torneo"
               value={torneoId}
               onChange={(e) => setTorneoId(e.target.value)}
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 max-h-40 overflow-y-auto"
-              size={5} // 🔥 scroll visible
+              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
               required
               disabled={isLoading}
           >
+            <option value="">Selecciona un torneo</option>
             {isLoading ? (
                 <option>Cargando torneos...</option>
             ) : torneos.length === 0 ? (
@@ -192,7 +195,7 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
                             setShowPlayer1Results(false)
                           }}
                       >
-                        id({j.id}) {j.nombre} {j.elo}
+                        id({j.id}) {j.nombre} {j.elo} puntos
                       </div>
                   ))}
                 </div>
@@ -237,7 +240,7 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
                             setShowPlayer2Results(false)
                           }}
                       >
-                        id({j.id}) {j.nombre} {j.elo}
+                        id({j.id}) {j.nombre} {j.elo} puntos
                       </div>
                   ))}
                 </div>
@@ -245,12 +248,81 @@ export default function PartidoForm({ onSuccessAction, onCancelAction }: Partido
           </div>
         </div>
 
-        {/* resto igual */}
+        {jugador1Id && jugador2Id && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Ganador
+              </label>
+              <select
+                  value={ganadorId}
+                  onChange={(e) => setGanadorId(e.target.value)}
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                  required
+              >
+                <option value="">Selecciona un ganador</option>
+                <option value={jugador1Id}>
+                  {jugadores.find(j => j.id === parseInt(jugador1Id))?.nombre}
+                </option>
+                <option value={jugador2Id}>
+                  {jugadores.find(j => j.id === parseInt(jugador2Id))?.nombre}
+                </option>
+              </select>
+            </div>
+        )}
+
+        {/* RESTO */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Ronda
+            </label>
+            <select
+                value={ronda}
+                onChange={(e) => setRonda(e.target.value)}
+                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+                required
+            >
+              <option value="">Selecciona una ronda</option>
+              <option value="Grupos">Grupos</option>
+              <option value="32avos">32avos</option>
+              <option value="16avos">16avos</option>
+              <option value="Octavos">Octavos</option>
+              <option value="Cuartos">Cuartos</option>
+              <option value="Semifinal">Semifinal</option>
+              <option value="Campeón">Campeón</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Tipo Especial
+            </label>
+            <select
+                value={tipoEspecial}
+                onChange={(e) => setTipoEspecial(e.target.value)}
+                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
+            >
+              <option value="">Ninguno</option>
+              <option value="Forfeit">Forfeit</option>
+              <option value="Bye">Bye</option>
+            </select>
+          </div>
+        </div>
+
         <div className="flex justify-end space-x-2">
-          <button type="button" onClick={onCancelAction} className="px-4 py-2 border rounded">
+          <button
+              type="button"
+              onClick={onCancelAction}
+              className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+              disabled={isSubmitting}
+          >
             Cancelar
           </button>
-          <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded">
+          <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700"
+              disabled={isSubmitting}
+          >
             {isSubmitting ? 'Registrando...' : 'Registrar Partido'}
           </button>
         </div>
