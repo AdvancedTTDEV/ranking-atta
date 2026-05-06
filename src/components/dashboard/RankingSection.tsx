@@ -1,271 +1,223 @@
 'use client'
 import { useState, useEffect } from 'react'
 import DataTable from '@/components/ui/DataTable'
-import { ArrowDownIcon } from '@heroicons/react/24/outline'
-import jsPDF from 'jspdf'
-import autoTable from 'jspdf-autotable'
+import { ArrowDownTrayIcon } from '@heroicons/react/24/outline' // Cambiado por consistencia de nombres
 
+// ── Tipos ──────────────────────────────────────────────────────────────────
 type Jugador = {
-  id: number
-  ranking: number
-  nombre: string
-  elo: number
-  clubes?: { nombre?: string }
-  categorias?: { nombre?: string }
+    id: number
+    ranking: number
+    nombre: string
+    elo: number
+    clubes?: { nombre?: string }
+    categorias?: { nombre?: string }
 }
 
 type Categoria = {
-  id: number
-  nombre: string
+    id: number
+    nombre: string
 }
 
 export default function RankingSection({ className = '' }) {
-  const [jugadores, setJugadores] = useState<Jugador[]>([])
-  const [categorias, setCategorias] = useState<Categoria[]>([])
-  const [selectedCategoriaId, setSelectedCategoriaId] = useState<string>('')
-  const [currentPage, setCurrentPage] = useState(1)
-  const [itemsPerPage, setItemsPerPage] = useState(10)
-  const [totalItems, setTotalItems] = useState(0)
-  const [isLoading, setIsLoading] = useState(false)
+    const [jugadores, setJugadores] = useState<Jugador[]>([])
+    const [categorias, setCategorias] = useState<Categoria[]>([])
+    const [selectedCategoriaId, setSelectedCategoriaId] = useState<string>('')
+    const [currentPage, setCurrentPage] = useState(1)
+    const [itemsPerPage, setItemsPerPage] = useState(10)
+    const [totalItems, setTotalItems] = useState(0)
+    const [isLoading, setIsLoading] = useState(false)
 
-  // Obtener categorías disponibles
-  const fetchCategorias = async () => {
-    try {
-      const response = await fetch('/api/categorias')
-      const data = await response.json()
-      setCategorias(data)
-    } catch (error) {
-      console.error('Error fetching categories:', error)
-    }
-  }
-
-   const fetchJugadores = async (page = 1, limit = 10) => {
-    setIsLoading(true)
-     try {
-       const url = `/api/ranking?page=${page}&limit=${limit}${
-           selectedCategoriaId ? `&categoriaId=${selectedCategoriaId}` : ''
-       }`
-
-       const response = await fetch(url)
-
-       if (!response.ok) {
-         throw new Error(`Error ${response.status}: ${response.statusText}`)
-       }
-
-       const data = await response.json()
-
-       const startRank = (page - 1) * limit + 1
-       const rankedData = data.jugadores.map((jugador: Jugador, index: number) => ({
-         ...jugador,
-         ranking: startRank + index
-       }))
-      
-      setJugadores(rankedData)
-      setTotalItems(data.total)
-    } catch (error) {
-      console.error('Error fetching ranking:', error)
-    } finally {
-      setIsLoading(false)
-    }
-  }
-  useEffect(() => {
-    fetchCategorias()
-  }, [])
-
-  useEffect(() => {
-    // Resetear a página 1 cuando cambia la categoría
-    setCurrentPage(1)
-    fetchJugadores(1, itemsPerPage)
-  }, [selectedCategoriaId])
-
-  useEffect(() => {
-    fetchJugadores(currentPage, itemsPerPage)
-  }, [currentPage, itemsPerPage])
-
-
-  const getCurrentMonth = (month: number, year: number, formatted: boolean) => {
-    const monthMap = [
-      { value: "1", label: "ENE", key: "ENE" },
-      { value: "2", label: "FEB", key: "FEB" },
-      { value: "3", label: "MAR", key: "MAR" },
-      { value: "4", label: "ABRIL", key: "ABRIL" },
-      { value: "5", label: "MAY", key: "MAY" },
-      { value: "6", label: "JUN", key: "JUN" },
-      { value: "7", label: "JUL", key: "JUL" },
-      { value: "8", label: "AGO", key: "AGO" },
-      { value: "9", label: "SEP", key: "SEP" },
-      { value: "10", label: "OCT", key: "OCT" },
-      { value: "11", label: "NOV", key: "NOV" },
-      { value: "12", label: "DIC", key: "DIC" }
-    ];
-    
-    if (formatted) {
-      const mes = monthMap[month].key
-      return `${mes} ${year}`
-    } else {
-      return `${monthMap[month].key}_${year}`
-    }
-  }
-
-  const handleDownloadPDF = async () => {
-  setIsLoading(true)
-  try {
-    const url = `/api/ranking?all=true${
-      selectedCategoriaId ? `&categoriaId=${selectedCategoriaId}` : ''
-    }`
-
-    const response = await fetch(url)
-
-    if (!response.ok) {
-      throw new Error(`Error ${response.status}: ${response.statusText}`)
+    const fetchCategorias = async () => {
+        try {
+            const response = await fetch('/api/categorias')
+            const data = await response.json()
+            setCategorias(data)
+        } catch (error) {
+            console.error('Error fetching categories:', error)
+        }
     }
 
-    const data = await response.json()
-    const date = new Date()
-    const year = date.getFullYear()
-    const month = date.getMonth()
+    const fetchJugadores = async (page = 1, limit = 10) => {
+        setIsLoading(true)
+        try {
+            const url = `/api/ranking?page=${page}&limit=${limit}${
+                selectedCategoriaId ? `&categoriaId=${selectedCategoriaId}` : ''
+            }`
+            const response = await fetch(url)
+            if (!response.ok) throw new Error(`Error ${response.status}`)
+            const data = await response.json()
 
-    const categoriaNombre = selectedCategoriaId
-      ? categorias.find(cat => cat.id === Number(selectedCategoriaId))?.nombre || ''
-      : ''
+            const startRank = (page - 1) * limit + 1
+            const rankedData = data.jugadores.map((j: Jugador, index: number) => ({
+                ...j,
+                ranking: startRank + index,
+            }))
 
-    const doc = new jsPDF()
-    const pdfWidth = 210
-    const pdfHeight = 297
+            setJugadores(rankedData)
+            setTotalItems(data.total)
+        } catch (error) {
+            console.error('Error fetching ranking:', error)
+        } finally {
+            setIsLoading(false)
+        }
+    }
 
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.src = '/logo.jpg'
+    useEffect(() => { fetchCategorias() }, [])
 
-    img.onload = () => {
-      // 🧪 Crear canvas para marca de agua en alta resolución
-      const scale = 3 // más alto = mejor calidad
-      const wmW = 200 * scale
-      const wmH = 100 * scale
-      const canvas = document.createElement('canvas')
-      const ctx = canvas.getContext('2d')!
-      canvas.width = wmW
-      canvas.height = wmH
-      ctx.globalAlpha = 0.15
-      ctx.drawImage(img, 0, 0, wmW, wmH)
-      const watermarkDataUrl = canvas.toDataURL('image/png')
+    useEffect(() => {
+        setCurrentPage(1)
+        fetchJugadores(1, itemsPerPage)
+    }, [selectedCategoriaId])
 
-      // 🧾 Tabla con encabezado y marca de agua en cada página
-      autoTable(doc, {
-        head: [['Ranking', 'Nombre', 'Puntos', 'Club', 'Categoría']],
-        body: data.jugadores.map((j: Jugador, index: number) => [
-          index + 1,
-          j.nombre,
-          j.elo,
-          j.clubes?.nombre || 'Sin club',
-          j.categorias?.nombre || 'Sin categoría'
-        ]),
-        didDrawPage: function () {
-          // 🔹 Logo encabezado
-          const logoWidth = 40
-          const logoHeight = 20
-          const logoX = 10
-          const logoY = 10
-          doc.addImage(img, 'PNG', logoX, logoY, logoWidth, logoHeight)
+    useEffect(() => {
+        fetchJugadores(currentPage, itemsPerPage)
+    }, [currentPage, itemsPerPage])
 
-          // 🔹 Título centrado
-          const title = `Ranking ATTA ${categoriaNombre ? `${categoriaNombre} Categoria - ` : ''}${getCurrentMonth(month, year, true)}`
-          doc.setFontSize(20)
-          doc.setFont('times', 'italic')
-          doc.setTextColor(40, 40, 40)
-          const titleWidth = doc.getTextWidth(title)
-          const titleX = (pdfWidth - titleWidth) / 2
-          const titleY = logoY + logoHeight + 10
-          doc.text(title, titleX, titleY)
+    const getCurrentMonth = (month: number, year: number, formatted: boolean) => {
+        const monthMap = ['ENE','FEB','MAR','ABRIL','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC']
+        return formatted ? `${monthMap[month]} ${year}` : `${monthMap[month]}_${year}`
+    }
 
-          // 🔹 Línea debajo del título
-          const lineY = titleY + 4
-          doc.setLineWidth(0.5)
-          doc.line(15, lineY, 195, lineY)
+    // ── Genera y descarga el PDF vía Puppeteer (Servidor) ───────────────────
+    const handleDownloadPDF = async () => {
+        if (isLoading) return // Evita múltiples clicks
+        setIsLoading(true)
 
-          // 🔹 Marca de agua en el centro (usando el canvas en alta resolución)
-          const wmDisplayW = (wmW / scale) * 0.6
-          const wmDisplayH = (wmH / scale) * 0.6
-          const wmX = (pdfWidth - wmDisplayW) / 2
-          const wmY = (pdfHeight - wmDisplayH) / 2
-          doc.addImage(watermarkDataUrl, 'PNG', wmX, wmY, wmDisplayW, wmDisplayH)
+        try {
+            const url = `/api/ranking?all=true${
+                selectedCategoriaId ? `&categoriaId=${selectedCategoriaId}` : ''
+            }`
+            const response = await fetch(url)
+            if (!response.ok) throw new Error(`Error ${response.status}`)
+            const data = await response.json()
+
+            const date = new Date()
+            const mesAnio = getCurrentMonth(date.getMonth(), date.getFullYear(), true)
+            const mesAnioFile = getCurrentMonth(date.getMonth(), date.getFullYear(), false)
+            const categoriaNombre = selectedCategoriaId
+                ? categorias.find((c) => c.id === Number(selectedCategoriaId))?.nombre || ''
+                : 'GENERAL'
+
+            // ✅ Fix 1: Mejor manejo del Base64 del fondo
+            const bgBase64 = await new Promise<string>((resolve, reject) => {
+                const img = new window.Image()
+                img.crossOrigin = 'anonymous'
+                img.src = '/canvas.jpg'
+                img.onload = () => {
+                    const canvas = document.createElement('canvas')
+                    canvas.width = img.width
+                    canvas.height = img.height
+                    const ctx = canvas.getContext('2d')
+                    if (!ctx) return reject('Error de contexto canvas')
+                    ctx.drawImage(img, 0, 0)
+                    resolve(canvas.toDataURL('image/jpeg', 0.8)) // 0.8 para comprimir un poco
+                }
+                img.onerror = () => reject('No se pudo cargar el fondo')
+            })
+
+            const pdfResponse = await fetch('/api/generate-pdf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jugadores: data.jugadores,
+                    categoriaNombre,
+                    mesAnio,
+                    bgBase64,
+                }),
+            })
+
+            if (!pdfResponse.ok) {
+                const errorText = await pdfResponse.text()
+                throw new Error(errorText || 'Error en servidor de PDF')
+            }
+
+            // ✅ Fix 2: Manejo seguro del Blob para evitar fugas de memoria
+            const blob = await pdfResponse.blob()
+            const downloadUrl = window.URL.createObjectURL(blob)
+            const link = document.createElement('a')
+            link.href = downloadUrl
+            // Limpia el nombre del archivo de caracteres raros
+            const safeName = categoriaNombre.replace(/[^a-z0-9]/gi, '_')
+            link.download = `Ranking_ATTA_${safeName}_${mesAnioFile}.pdf`
+
+            document.body.appendChild(link)
+            link.click()
+
+            // Cleanup necesario
+            setTimeout(() => {
+                document.body.removeChild(link)
+                window.URL.revokeObjectURL(downloadUrl)
+            }, 100)
+
+        } catch (error) {
+            console.error('Error detallado:', error)
+            alert('Error al generar el archivo. Revisa la consola para más detalles.')
+        } finally {
+            setIsLoading(false)
+        }
+    }
+
+    const columns = [
+        { header: 'Ranking', accessor: 'ranking' },
+        { header: 'Nombre', accessor: 'nombre' },
+        { header: 'Puntaje', accessor: 'elo' },
+        {
+            header: 'Club',
+            accessor: 'clubes',
+            render: (club: { nombre?: string }) => club?.nombre || 'Sin club',
         },
-        margin: { top: 45 } // espacio para el encabezado
-      })
+        {
+            header: 'Categoría',
+            accessor: 'categorias',
+            render: (categoria: { nombre?: string }) => categoria?.nombre || 'Sin categoría',
+        },
+    ]
 
-      // 💾 Descargar PDF
-      doc.save(`Ranking_Atta_${categoriaNombre || 'General'}_${getCurrentMonth(month, year, false)}.pdf`)
-    }
+    return (
+        <div className={`bg-white rounded-lg shadow p-4 ${className}`}>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-3">
+                <div>
+                    <h2 className="text-xl font-bold text-slate-800">Ranking de Jugadores</h2>
+                    <p className="text-sm text-slate-500">Gestión de escalafón oficial ATTA</p>
+                </div>
 
-    img.onerror = () => {
-      alert('Error cargando el logo para el PDF.')
-    }
-  } catch (error) {
-    console.error('Error al generar PDF:', error)
-  } finally {
-    setIsLoading(false)
-  }
-}
+                <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+                    <select
+                        value={selectedCategoriaId}
+                        onChange={(e) => setSelectedCategoriaId(e.target.value)}
+                        className="border border-slate-300 rounded-lg px-3 py-2 text-sm w-full md:w-48 focus:ring-2 focus:ring-blue-500 outline-none bg-white text-slate-700"
+                    >
+                        <option value="">Todas las categorías</option>
+                        {categorias.map((cat) => (
+                            <option key={cat.id} value={cat.id}>{cat.nombre}</option>
+                        ))}
+                    </select>
 
+                    <button
+                        onClick={handleDownloadPDF}
+                        disabled={isLoading}
+                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center transition-colors shadow-sm min-w-[130px]"
+                    >
+                        {isLoading ? (
+                            <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                        ) : (
+                            <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
+                        )}
+                        {isLoading ? 'Generando...' : 'Exportar PDF'}
+                    </button>
+                </div>
+            </div>
 
-
-  const columns = [
-    { header: 'Ranking', accessor: 'ranking', sortable: true },
-    { header: 'Nombre', accessor: 'nombre', sortable: true },
-    { header: 'Puntaje', accessor: 'elo', sortable: true },
-    {
-      header: 'Club',
-      accessor: 'clubes',
-      render: (club: { nombre?: string }) => club?.nombre || 'Sin club',
-      sortable: true
-    },
-    {
-      header: 'Categoría',
-      accessor: 'categorias',
-      render: (categoria: { nombre?: string }) => categoria?.nombre || 'Sin categoría',
-      sortable: true
-    },
-  ]
-
-  return (
-      <div className={`bg-white rounded-lg shadow p-4 ${className}`}>
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
-          <h2 className="text-xl font-bold">Ranking de Jugadores</h2>
-
-          <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
-            <select
-                value={selectedCategoriaId}
-                onChange={(e) => setSelectedCategoriaId(e.target.value)}
-                className="border rounded px-3 py-1 w-full md:w-48"
-            >
-              <option value="">Todas las categorías</option>
-              {categorias.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.nombre}
-                  </option>
-              ))}
-            </select>
-
-            <button
-                onClick={handleDownloadPDF}
-                className="bg-green-600 text-white px-3 py-1 rounded flex items-center justify-center"
-            >
-              <ArrowDownIcon className="h-4 w-4 mr-1" />
-              PDF
-            </button>
-          </div>
+            <DataTable
+                columns={columns}
+                data={jugadores}
+                currentPage={currentPage}
+                itemsPerPage={itemsPerPage}
+                totalItems={totalItems}
+                onPageChange={setCurrentPage}
+                onItemsPerPageChange={setItemsPerPage}
+                isLoading={isLoading}
+            />
         </div>
-
-        <DataTable
-            columns={columns}
-            data={jugadores}
-            currentPage={currentPage}
-            itemsPerPage={itemsPerPage}
-            totalItems={totalItems}
-            onPageChange={setCurrentPage}
-            onItemsPerPageChange={setItemsPerPage}
-            isLoading={isLoading}
-        />
-      </div>
-  )
+    )
 }
