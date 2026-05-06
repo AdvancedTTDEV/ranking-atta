@@ -6,12 +6,16 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const page = Number(searchParams.get('page') || 1)
     const limit = Number(searchParams.get('limit') || 10)
+    const all = searchParams.get('all') === 'true'
+
     const skip = (page - 1) * limit
 
     const [torneos, total] = await Promise.all([
       prisma.torneos.findMany({
-        skip,
-        take: limit,
+        ...(all ? {} : { skip, take: limit }),
+        orderBy: {
+          fecha: 'desc' // 🔥 IMPORTANTE (más recientes primero)
+        },
         include: {
           torneo_categorias: {
             include: {
@@ -22,12 +26,12 @@ export async function GET(request: Request) {
       }),
       prisma.torneos.count()
     ])
-    
+
     return NextResponse.json({ torneos, total })
   } catch (error) {
     return NextResponse.json(
-      { message: "Error al obtener torneos" },
-      { status: 500 }
+        { message: "Error al obtener torneos" },
+        { status: 500 }
     )
   }
 }
