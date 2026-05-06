@@ -223,7 +223,7 @@ export async function POST(req: Request) {
 
         await browser.close()
 
-        return new NextResponse(pdf, {
+        return new NextResponse(Buffer.from(pdf), {
             headers: {
                 'Content-Type': 'application/pdf',
                 'Content-Disposition': `attachment; filename=Ranking_${categoriaNombre.replace(/\s+/g, '_')}.pdf`,
