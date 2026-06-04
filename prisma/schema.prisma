@@ -16,6 +16,8 @@ model categorias {
   jugadores                                                                jugadores[]
   participaciones                                                          participaciones[]
   torneo_categorias                                                        torneo_categorias[]
+  torneo_grupos                                                            torneo_grupos[]
+  torneo_participantes                                                     torneo_participantes[]
 }
 
 model clubes {
@@ -58,6 +60,7 @@ model jugadores {
   partidos_partidos_jugador1_idTojugadores partidos[]             @relation("partidos_jugador1_idTojugadores")
   partidos_partidos_jugador2_idTojugadores partidos[]             @relation("partidos_jugador2_idTojugadores")
   partidos_partidos_ganador_idTojugadores  partidos[]             @relation("partidos_ganador_idTojugadores")
+  torneo_participantes                     torneo_participantes[]
 
   @@index([categoria_id], map: "categoria_id")
   @@index([club_id], map: "club_id")
@@ -65,18 +68,19 @@ model jugadores {
 }
 
 model participaciones {
-  id              Int                              @id @default(autoincrement())
-  jugador_id      Int
-  torneo_id       Int
-  categoria_id    Int
-  elo_antes       Float                            @db.Float
-  elo_despues     Float                            @db.Float
-  bonificacion    Int?                             @default(0)
-  ronda_alcanzada participaciones_ronda_alcanzada?
-  posicion        Int?
-  jugadores       jugadores                        @relation(fields: [jugador_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "participaciones_ibfk_1")
-  torneos         torneos                          @relation(fields: [torneo_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "participaciones_ibfk_2")
-  categorias      categorias                       @relation(fields: [categoria_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "participaciones_ibfk_3")
+  id                         Int                              @id @default(autoincrement())
+  jugador_id                 Int
+  torneo_id                  Int
+  categoria_id               Int
+  elo_antes                  Float                            @db.Float
+  elo_despues                Float                            @db.Float
+  bonificacion               Int?                             @default(0)
+  ronda_alcanzada            participaciones_ronda_alcanzada?
+  posicion                   Int?
+  jugadores                  jugadores                        @relation(fields: [jugador_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "participaciones_ibfk_1")
+  torneos                    torneos                          @relation(fields: [torneo_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "participaciones_ibfk_2")
+  categorias                 categorias                       @relation(fields: [categoria_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "participaciones_ibfk_3")
+  torneo_grupo_participantes torneo_grupo_participantes[]
 
   @@index([categoria_id], map: "categoria_id")
   @@index([jugador_id], map: "jugador_id")
@@ -124,6 +128,61 @@ model torneos {
   participaciones      participaciones[]
   partidos             partidos[]
   torneo_categorias    torneo_categorias[]
+  torneo_grupos        torneo_grupos[]
+  torneo_participantes torneo_participantes[]
+}
+
+model torneo_grupos {
+  id           Int @id @default(autoincrement())
+  torneo_id    Int
+  categoria_id Int
+  numero_grupo Int
+
+  created_at DateTime @default(now())
+
+  torneos    torneos    @relation(fields: [torneo_id], references: [id], onDelete: Cascade)
+  categorias categorias @relation(fields: [categoria_id], references: [id], onDelete: Cascade)
+
+  participantes torneo_grupo_participantes[]
+
+  @@index([torneo_id])
+  @@index([categoria_id])
+}
+
+model torneo_grupo_participantes {
+  id                     Int      @id @default(autoincrement())
+  grupo_id               Int
+  torneo_participante_id Int
+  posicion               Int?
+  created_at             DateTime @default(now())
+
+  torneo_grupos        torneo_grupos        @relation(fields: [grupo_id], references: [id], onDelete: Cascade)
+  torneo_participantes torneo_participantes @relation(fields: [torneo_participante_id], references: [id], onDelete: Cascade)
+  participaciones      participaciones?     @relation(fields: [participacionesId], references: [id])
+  participacionesId    Int?
+
+  @@unique([grupo_id, torneo_participante_id])
+  @@index([grupo_id])
+  @@index([torneo_participante_id])
+}
+
+model torneo_participantes {
+  id           Int      @id @default(autoincrement())
+  torneo_id    Int
+  jugador_id   Int
+  categoria_id Int
+  seed         Int      @default(0)
+  created_at   DateTime @default(now())
+
+  torneos    torneos    @relation(fields: [torneo_id], references: [id], onDelete: Cascade)
+  jugadores  jugadores  @relation(fields: [jugador_id], references: [id], onDelete: Cascade)
+  categorias categorias @relation(fields: [categoria_id], references: [id], onDelete: Cascade)
+
+  torneo_grupo_participantes torneo_grupo_participantes[]
+
+  @@index([torneo_id])
+  @@index([jugador_id])
+  @@index([categoria_id])
 }
 
 enum categorias_nombre {

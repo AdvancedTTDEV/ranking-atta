@@ -1,4 +1,4 @@
-// app/api/dbStarter/route.ts
+// app/api/dbStarter/route.tsx
 import { NextResponse } from 'next/server'
 import prisma  from '@/lib/prisma'
 

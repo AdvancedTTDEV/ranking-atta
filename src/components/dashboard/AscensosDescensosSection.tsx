@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
-import AscensosDescensosForm from "@/components/forms/AscensosDescensosForm";
+import AscensosDescensosForm from "@/components/forms/AscensosDescensosForm"
+import Modal from "@/components/ui/Modal"
 
 export default function GestionPage() {
     const [showForm, setShowForm] = useState<'ascenso' | 'descenso' | null>(null)
@@ -22,19 +23,29 @@ export default function GestionPage() {
                 </button>
             </div>
 
-            {showForm === 'ascenso' && (
+            <Modal
+                isOpen={showForm === 'ascenso'}
+                onClose={() => setShowForm(null)}
+                title="Gestión de Ascensos"
+                size="xl"
+            >
                 <AscensosDescensosForm
                     tipo="ascenso"
                     onClose={() => setShowForm(null)}
                 />
-            )}
+            </Modal>
 
-            {showForm === 'descenso' && (
+            <Modal
+                isOpen={showForm === 'descenso'}
+                onClose={() => setShowForm(null)}
+                title="Gestión de Descensos"
+                size="xl"
+            >
                 <AscensosDescensosForm
                     tipo="descenso"
                     onClose={() => setShowForm(null)}
                 />
-            )}
+            </Modal>
         </div>
     )
 }

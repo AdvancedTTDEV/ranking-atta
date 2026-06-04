@@ -1,9 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
 import DataTable from '@/components/ui/DataTable'
-import { ArrowDownTrayIcon } from '@heroicons/react/24/outline' // Cambiado por consistencia de nombres
+import { ArrowDownTrayIcon } from '@heroicons/react/24/outline'
 
-// ── Tipos ──────────────────────────────────────────────────────────────────
 type Jugador = {
     id: number
     ranking: number
@@ -73,16 +72,21 @@ export default function RankingSection({ className = '' }) {
         fetchJugadores(currentPage, itemsPerPage)
     }, [currentPage, itemsPerPage])
 
+    // ← Escucha el evento de refresh desde GestionAscensoDescenso
+    useEffect(() => {
+        const handleRefresh = () => fetchJugadores(currentPage, itemsPerPage)
+        window.addEventListener('ranking:refresh', handleRefresh)
+        return () => window.removeEventListener('ranking:refresh', handleRefresh)
+    }, [currentPage, itemsPerPage])
+
     const getCurrentMonth = (month: number, year: number, formatted: boolean) => {
         const monthMap = ['ENE','FEB','MAR','ABRIL','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC']
         return formatted ? `${monthMap[month]} ${year}` : `${monthMap[month]}_${year}`
     }
 
-    // ── Genera y descarga el PDF vía Puppeteer (Servidor) ───────────────────
     const handleDownloadPDF = async () => {
-        if (isLoading) return // Evita múltiples clicks
+        if (isLoading) return
         setIsLoading(true)
-
         try {
             const url = `/api/ranking?all=true${
                 selectedCategoriaId ? `&categoriaId=${selectedCategoriaId}` : ''
@@ -98,7 +102,6 @@ export default function RankingSection({ className = '' }) {
                 ? categorias.find((c) => c.id === Number(selectedCategoriaId))?.nombre || ''
                 : 'GENERAL'
 
-            // ✅ Fix 1: Mejor manejo del Base64 del fondo
             const bgBase64 = await new Promise<string>((resolve, reject) => {
                 const img = new window.Image()
                 img.crossOrigin = 'anonymous'
@@ -110,7 +113,7 @@ export default function RankingSection({ className = '' }) {
                     const ctx = canvas.getContext('2d')
                     if (!ctx) return reject('Error de contexto canvas')
                     ctx.drawImage(img, 0, 0)
-                    resolve(canvas.toDataURL('image/jpeg', 0.8)) // 0.8 para comprimir un poco
+                    resolve(canvas.toDataURL('image/jpeg', 0.8))
                 }
                 img.onerror = () => reject('No se pudo cargar el fondo')
             })
@@ -131,24 +134,18 @@ export default function RankingSection({ className = '' }) {
                 throw new Error(errorText || 'Error en servidor de PDF')
             }
 
-            // ✅ Fix 2: Manejo seguro del Blob para evitar fugas de memoria
             const blob = await pdfResponse.blob()
             const downloadUrl = window.URL.createObjectURL(blob)
             const link = document.createElement('a')
             link.href = downloadUrl
-            // Limpia el nombre del archivo de caracteres raros
             const safeName = categoriaNombre.replace(/[^a-z0-9]/gi, '_')
             link.download = `Ranking_ATTA_${safeName}_${mesAnioFile}.pdf`
-
             document.body.appendChild(link)
             link.click()
-
-            // Cleanup necesario
             setTimeout(() => {
                 document.body.removeChild(link)
                 window.URL.revokeObjectURL(downloadUrl)
             }, 100)
-
         } catch (error) {
             console.error('Error detallado:', error)
             alert('Error al generar el archivo. Revisa la consola para más detalles.')
