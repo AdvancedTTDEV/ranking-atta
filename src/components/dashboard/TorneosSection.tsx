@@ -11,7 +11,7 @@ type Torneo = {
     nombre: string
     fecha: string
     ubicacion: string
-    torneo_categorias: { categorias?: { id: number; nombre: string } }[]
+    torneo_categorias: { categorias : { id: number; nombre: string } }[]
 }
 
 type PaginatedResponse = {
