@@ -19,16 +19,20 @@ export async function GET(request: Request, { params }: RouteParams) {
             )
         }
 
-        const inscritos = await prisma.torneo_participantes.findMany({
-            where: { torneo_id: torneoId, categoria_id: categoriaId },
+        const participantes = await prisma.torneo_participantes.findMany({
+            where: {
+                torneo_id: torneoId,
+                categoria_id: categoriaId
+            },
             include: {
                 jugadores: {
-                    select: { id: true, nombre: true, categoria_id: true }
+                    include: {
+                        clubes: true
+                    }
                 }
             }
         })
 
-        const participantes = inscritos.map(i => i.jugadores)
         return NextResponse.json({ participantes })
     } catch (error: any) {
         console.error("Error al obtener participantes:", error)

@@ -129,7 +129,10 @@ export async function POST(request: Request, { params }: RouteParams) {
                     })
                 }
             }
-        })
+        },{
+            timeout: 20000
+        }
+    )
 
         return NextResponse.json({ success: true, message: "Grupos generados exitosamente" })
     } catch (error: any) {
