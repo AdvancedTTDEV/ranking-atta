@@ -75,6 +75,7 @@ export async function POST(request: Request, { params }: RouteParams) {
         return NextResponse.json({ success: true, message: "Inscripciones actualizadas correctamente" })
     } catch (error: any) {
         console.error("Error al procesar inscripciones:", error)
+        console.error("Detalle meta:", JSON.stringify(error.meta, null, 2))   // <-- add this line
         return NextResponse.json(
             { error: "Error al guardar inscripciones", detalles: error.message },
             { status: 500 }

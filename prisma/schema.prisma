@@ -212,7 +212,7 @@ enum partidos_ronda {
   Cuartos
   Semifinal      @map("Semifinal")
   Final
-  Campe_n        @map("Campeón")
+  Campe_n        @map("Campeón")
 }
 
 enum participaciones_ronda_alcanzada {
@@ -223,5 +223,5 @@ enum participaciones_ronda_alcanzada {
   cuartos
   semifinal
   final
-  campe_n        @map("campeón")
+  campe_n        @map("campeón")
 }

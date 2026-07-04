@@ -56,7 +56,10 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Insc
                 const resInscritos = await fetch(`/api/torneos/${torneo.id}/participantes?categoriaId=${selectedCategoriaId}`)
                 if (resInscritos.ok) {
                     const dataInscritos = await resInscritos.json()
-                    setSelectedJugadores(dataInscritos.participantes || [])
+                    const jugadoresInscritos: Jugador[] = (dataInscritos.participantes || [])
+                        .map((p: any) => p.jugadores)
+                        .filter(Boolean)
+                    setSelectedJugadores(jugadoresInscritos)
                 } else {
                     setSelectedJugadores([])
                 }
