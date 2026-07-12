@@ -206,9 +206,10 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         torneo?.modalidad,
         torneo?.abierto,
     )
-    // Solo DOBLES y EQUIPOS son torneos totalmente abiertos. En INDIVIDUAL
-    // con varias categorías el selector se mantiene.
-    const esAbierto = esTorneoAbiertoTotal(torneo?.modalidad)
+    // El torneo es "totalmente abierto" si la modalidad es DOBLES/EQUIPOS
+    // o si el usuario lo marcó como abierto al crearlo (columna `abierto`).
+    // En INDIVIDUAL sin marca `abierto`, el selector se mantiene.
+    const esAbierto = esTorneoAbiertoTotal(torneo?.modalidad, torneo?.abierto)
     const categoriaOperativa = esAbierto
         ? (todasCategorias.find(c => c.nombre === 'primera') || categorias[0])
         : categorias.find(c => c.id.toString() === categoriaId) || categorias[0]

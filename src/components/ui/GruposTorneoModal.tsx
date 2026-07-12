@@ -106,10 +106,9 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
         torneo?.abierto,
     )
 
-    // Solo DOBLES y EQUIPOS son torneos totalmente abiertos. En INDIVIDUAL,
-    // aunque "primera" admita jugadores de cualquier categoría, el resto
-    // se corren por separado y el selector debe permanecer visible.
-    const esAbierto = esTorneoAbiertoTotal(torneo?.modalidad)
+    // Un INDIVIDUAL con la marca `abierto = true` también es totalmente
+    // abierto: oculta el selector y mezcla todos los inscritos.
+    const esAbierto = esTorneoAbiertoTotal(torneo?.modalidad, torneo?.abierto)
     const categoriaOperativa = esAbierto
         ? (todasCategorias.find(c => c.nombre === 'primera') || categoriasDelTorneo[0])
         : categoriasDelTorneo.find(c => c.id.toString() === selectedCategoriaId) || categoriasDelTorneo[0]

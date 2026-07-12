@@ -85,7 +85,7 @@ export default function LlavesTorneoModal({
     )
     // Solo DOBLES y EQUIPOS son torneos totalmente abiertos. En INDIVIDUAL
     // con varias categorías el selector se mantiene.
-    const esAbierto = esTorneoAbiertoTotal(torneo?.modalidad)
+    const esAbierto = esTorneoAbiertoTotal(torneo?.modalidad, torneo?.abierto)
 
     useEffect(() => {
         // Al cambiar de torneo, seleccionamos la primera categoría SOLO si
