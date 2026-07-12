@@ -10,9 +10,36 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       where: { id: Number(partidoId), torneo_id: torneoId, fase: 'ELIMINACION' },
       include: { torneos: { select: { modalidad: true } }, participante_local: { include: { miembros: true } }, participante_visitante: { include: { miembros: true } } }
     })
-    if (!partido || !partido.participante_local || !partido.participante_visitante) return NextResponse.json({ error: 'El partido no está listo' }, { status: 400 })
-    if (![partido.participante_local_id, partido.participante_visitante_id].includes(Number(ganadorParticipanteId))) return NextResponse.json({ error: 'El ganador debe ser uno de los dos participantes' }, { status: 400 })
+    if (!partido) return NextResponse.json({ error: 'El partido no está listo' }, { status: 400 })
+
     if (partido.estado === 'FINALIZADO') return NextResponse.json({ error: 'El partido ya fue registrado' }, { status: 409 })
+
+    // Partido con BYE: uno de los dos participantes es null. El usuario
+    // arrastra al participante sembrado como ganador para avanzarlo a la
+    // siguiente ronda. No se invoca al SP `procesar_partido` porque no
+    // hubo encuentro real; solo se actualiza el resultado y se siembra.
+    if (!partido.participante_local_id || !partido.participante_visitante_id) {
+      const idSembrado = partido.participante_local_id ?? partido.participante_visitante_id
+      if (Number(ganadorParticipanteId) !== idSembrado) {
+        return NextResponse.json({ error: 'El ganador debe ser el participante sembrado' }, { status: 400 })
+      }
+      await prisma.torneo_partidos_programados.update({
+        where: { id: partido.id },
+        data: { ganador_participante_id: idSembrado, estado: 'FINALIZADO' },
+      })
+      if (partido.siguiente_partido_id && partido.siguiente_lado) {
+        await prisma.torneo_partidos_programados.update({
+          where: { id: partido.siguiente_partido_id },
+          data: partido.siguiente_lado === 'LOCAL'
+            ? { participante_local_id: idSembrado }
+            : { participante_visitante_id: idSembrado },
+        })
+      }
+      return NextResponse.json({ success: true, bye: true })
+    }
+
+    if (!partido.participante_local || !partido.participante_visitante) return NextResponse.json({ error: 'El partido no está listo' }, { status: 400 })
+    if (![partido.participante_local_id, partido.participante_visitante_id].includes(Number(ganadorParticipanteId))) return NextResponse.json({ error: 'El ganador debe ser uno de los dos participantes' }, { status: 400 })
     // Las primeras llaves creadas guardaban R1/R2. Derivamos la ronda desde
     // la cadena de avance para enviar siempre un valor válido al enum antiguo.
     let rondaSp = 'Campeón'

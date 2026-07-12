@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import PartidosResultadoModal from '@/components/ui/PartidosResultadoModal'
+import { categoriasParaSelector } from '@/lib/torneo'
 
 interface Categoria { id: number; nombre: string }
 interface Jugador { id: number; nombre: string }
@@ -59,6 +60,7 @@ interface Torneo {
     id: number
     nombre: string
     modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS'
+    abierto?: boolean
     torneo_categorias: { categorias: Categoria }[]
 }
 interface Props { isOpen: boolean; onClose: () => void; torneo: Torneo | null; onOpenLlaves?: () => void }
@@ -184,8 +186,38 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         seleccionados: Set<string>
         arbitroAsignado: Map<string, number | null>
     } | null>(null)
+    const [todasCategorias, setTodasCategorias] = useState<Categoria[]>([])
 
-    const categorias = torneo?.torneo_categorias.map(item => item.categorias) || []
+    // Cargamos el catálogo completo de categorías para soportar torneos
+    // "abiertos" (DOBLES, EQUIPOS o primera categoría), donde el selector
+    // debe mostrar TODAS las categorías, no solo las asignadas.
+    useEffect(() => {
+        let cancelado = false
+        fetch('/api/categorias')
+            .then(r => r.ok ? r.json() : [])
+            .then(data => { if (!cancelado) setTodasCategorias(Array.isArray(data) ? data : []) })
+            .catch(() => { /* silencioso: si falla, solo se muestran las del torneo */ })
+        return () => { cancelado = true }
+    }, [])
+
+    const categorias = categoriasParaSelector(
+        torneo?.torneo_categorias,
+        todasCategorias,
+        torneo?.modalidad,
+        torneo?.abierto,
+    )
+    // En torneos abiertos (DOBLES, EQUIPOS o primera categoría) los
+    // partidos se arman una sola vez sobre la categoría "primera", sin
+    // selector de categoría.
+    const esAbierto = Boolean(
+        torneo?.abierto ||
+        torneo?.modalidad === 'DOBLES' ||
+        torneo?.modalidad === 'EQUIPOS' ||
+        categorias.some(c => c.nombre === 'primera')
+    )
+    const categoriaOperativa = esAbierto
+        ? (todasCategorias.find(c => c.nombre === 'primera') || categorias[0])
+        : categorias.find(c => c.id.toString() === categoriaId) || categorias[0]
     const partidosPorGrupo = useMemo(() => {
         const grupos = new Map<number, { id: number; numero: number; partidos: Partido[] }>()
         partidos.forEach(partido => {
@@ -210,11 +242,24 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
     )
 
     useEffect(() => {
-        setCategoriaId(categorias[0]?.id.toString() || '')
-        setPartidos([])
-        setGrupoFiltroId(null)
-        setBorradores({})
-    }, [torneo])
+        // Al cambiar de torneo, seleccionamos la primera categoría SOLO si
+        // la actual ya no es válida. No limpiamos partidos ni borradores:
+        // el useEffect de [isOpen, categoriaId] recargará los datos y los
+        // borradores del usuario se conservan al alternar entre categorías.
+        if (!torneo) {
+            setCategoriaId('')
+            return
+        }
+        if (esAbierto) {
+            const primera = todasCategorias.find(c => c.nombre === 'primera') || categorias[0]
+            if (primera) setCategoriaId(String(primera.id))
+            return
+        }
+        const categoriaValida = categorias.some(c => c.id.toString() === categoriaId)
+        if (!categoriaValida) {
+            setCategoriaId(categorias[0]?.id.toString() || '')
+        }
+    }, [torneo, esAbierto, todasCategorias])
 
     const cargar = async () => {
         if (!torneo || !categoriaId) return
@@ -403,16 +448,23 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
             >
                 <div className="-mx-5 -mt-5 mb-4 card-flush overflow-hidden">
                     <div className="flex flex-wrap items-end gap-3 p-3 bg-subtle">
-                        <Select
-                            label="Categoría"
-                            value={categoriaId}
-                            onChange={e => setCategoriaId(e.target.value)}
-                            className="w-full sm:w-56"
-                        >
-                            {categorias.map(categoria => (
-                                <option key={categoria.id} value={categoria.id}>{categoria.nombre}</option>
-                            ))}
-                        </Select>
+                        {!esAbierto && (
+                            <Select
+                                label="Categoría"
+                                value={categoriaId}
+                                onChange={e => setCategoriaId(e.target.value)}
+                                className="w-full sm:w-56"
+                            >
+                                {categorias.map(categoria => (
+                                    <option key={categoria.id} value={categoria.id}>{categoria.nombre}</option>
+                                ))}
+                            </Select>
+                        )}
+                        {esAbierto && (
+                            <div className="banner banner-info text-xs flex-1">
+                                Torneo abierto: los partidos se arman en <b>primera categoría</b> mezclando a todos los inscritos.
+                            </div>
+                        )}
                         <Button
                             variant="success"
                             onClick={abrirPrevisualizacionGeneracion}

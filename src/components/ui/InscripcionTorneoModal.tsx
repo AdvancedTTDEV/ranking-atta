@@ -9,14 +9,21 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import PlayerSelector from '@/components/ui/PlayerSelector'
+import { categoriasParaSelector } from '@/lib/torneo'
 
-interface Jugador { id: number; nombre: string; categoria_id?: number }
+interface Jugador {
+    id: number
+    nombre: string
+    categoria_id?: number
+    categorias?: { id: number; nombre: string }
+}
 interface Categoria { id: number; nombre: string }
-interface Inscripcion { id?: number; nombrePersonalizado: string; jugadores: Jugador[] }
+interface Inscripcion { id?: number; nombrePersonalizado: string; jugadores: Jugador[]; categoriaId?: number }
 interface Torneo {
     id: number
     nombre: string
     modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS'
+    abierto?: boolean
     torneo_categorias: { categorias?: Categoria }[]
 }
 
@@ -36,12 +43,39 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
     const [jugadoresEnEdicion, setJugadoresEnEdicion] = useState<Jugador[]>([])
     const [nombrePersonalizado, setNombrePersonalizado] = useState('')
     const [isSaving, setIsSaving] = useState(false)
+    const [todasCategorias, setTodasCategorias] = useState<Categoria[]>([])
+
+    // Catálogo completo de categorías, necesario para detectar torneos
+    // "abiertos" (DOBLES, EQUIPOS o primera categoría) y mostrar todas las
+    // opciones en el selector.
+    useEffect(() => {
+        let cancelado = false
+        fetch('/api/categorias')
+            .then(r => r.ok ? r.json() : [])
+            .then(data => { if (!cancelado) setTodasCategorias(Array.isArray(data) ? data : []) })
+            .catch(() => { /* silencioso */ })
+        return () => { cancelado = true }
+    }, [])
 
     const categorias = useMemo(
-        () => (torneo?.torneo_categorias.map(item => item.categorias).filter(Boolean) as Categoria[]) || [],
-        [torneo]
+        () => categoriasParaSelector(
+            torneo?.torneo_categorias as { categorias: Categoria }[] | undefined,
+            todasCategorias,
+            torneo?.modalidad,
+            torneo?.abierto,
+        ),
+        [torneo, todasCategorias]
     )
     const modalidad = torneo?.modalidad || 'INDIVIDUAL'
+    // Torneos abiertos: primera, DOBLES, EQUIPOS. En estos casos el
+    // selector de categoría NO se muestra en el modal y la categoría se
+    // infiere de la categoría original de cada jugador al guardar.
+    const esAbierto = Boolean(
+        torneo?.abierto ||
+        modalidad === 'DOBLES' ||
+        modalidad === 'EQUIPOS' ||
+        categorias.some(c => c.nombre === 'primera')
+    )
 
     // IDs de jugadores que ya forman parte de inscripciones confirmadas en
     // el panel derecho. Se usan para ocultarlos del selector y para validar
@@ -61,12 +95,15 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
     // Firma estable de las inscripciones para detectar cambios sin guardar.
     // Usamos los IDs persistidos (o nombres de jugadores nuevos) y los nombres
     // personalizados; así el orden y la equivalencia de sets no afectan.
+    // En torneos abiertos incluimos la categoría en la firma porque dos
+    // inscripciones con los mismos jugadores pero distinta categoría se
+    // tratan como entidades distintas.
     const firmaInscripciones = useMemo(
         () => inscripciones
             .map(inscripcion => ({
                 key: inscripcion.id != null
-                    ? `id-${inscripcion.id}`
-                    : `tmp-${inscripcion.jugadores.map(j => j.id).sort().join('-')}`,
+                    ? `id-${inscripcion.id}-${inscripcion.categoriaId ?? ''}`
+                    : `tmp-${inscripcion.categoriaId ?? ''}-${inscripcion.jugadores.map(j => j.id).sort().join('-')}`,
                 nombre: inscripcion.nombrePersonalizado.trim(),
                 jugadores: inscripcion.jugadores.map(j => j.id).sort().join(',')
             }))
@@ -77,7 +114,9 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
     const firmaInicial = useMemo(
         () => inscripcionesIniciales
             .map(inscripcion => ({
-                key: inscripcion.id != null ? `id-${inscripcion.id}` : `tmp-${inscripcion.jugadores.map(j => j.id).sort().join('-')}`,
+                key: inscripcion.id != null
+                    ? `id-${inscripcion.id}-${inscripcion.categoriaId ?? ''}`
+                    : `tmp-${inscripcion.categoriaId ?? ''}-${inscripcion.jugadores.map(j => j.id).sort().join('-')}`,
                 nombre: inscripcion.nombrePersonalizado.trim(),
                 jugadores: inscripcion.jugadores.map(j => j.id).sort().join(',')
             }))
@@ -103,13 +142,23 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
     }, [torneo?.id])
 
     useEffect(() => {
-        if (!torneo || !categoriaId || !isOpen) return
+        if (!torneo || !isOpen) return
+        // En torneos abiertos no hay un único categoriaId; cada jugador
+        // conserva su categoría original y la guardamos con él. En
+        // torneos no abiertos sí exigimos una categoría.
+        if (!esAbierto && !categoriaId) return
 
         const cargar = async () => {
             try {
+                const jugadoresUrl = esAbierto
+                    ? '/api/jugadores?all=true'
+                    : `/api/jugadores?all=true&categoriaId=${categoriaId}`
+                const participantesUrl = esAbierto
+                    ? `/api/torneos/${torneo.id}/participantes`
+                    : `/api/torneos/${torneo.id}/participantes?categoriaId=${categoriaId}`
                 const [resJugadores, resInscritos] = await Promise.all([
-                    fetch(`/api/jugadores?all=true&categoriaId=${categoriaId}`),
-                    fetch(`/api/torneos/${torneo.id}/participantes?categoriaId=${categoriaId}`)
+                    fetch(jugadoresUrl),
+                    fetch(participantesUrl)
                 ])
                 const dataJugadores = await resJugadores.json()
                 const dataInscritos = await resInscritos.json()
@@ -117,7 +166,8 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
                     id: participante.id,
                     nombrePersonalizado: participante.nombre_personalizado || '',
                     jugadores: participante.miembros?.map((miembro: any) => miembro.jugadores)
-                        || (participante.jugadores ? [participante.jugadores] : [])
+                        || (participante.jugadores ? [participante.jugadores] : []),
+                    categoriaId: participante.categoria_id,
                 }))
                 setJugadoresDisponibles(dataJugadores.jugadores || [])
                 setInscripciones(cargadas)
@@ -127,7 +177,7 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
             }
         }
         cargar()
-    }, [categoriaId, isOpen, torneo?.id])
+    }, [categoriaId, isOpen, torneo?.id, esAbierto])
 
     const cambiarJugador = (jugador: Jugador) => {
         setJugadoresEnEdicion(prev => prev.some(item => item.id === jugador.id)
@@ -144,11 +194,15 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
         if (modalidad === 'INDIVIDUAL') {
             // En INDIVIDUAL cada jugador es su propia inscripción; agregamos
             // una entrada por cada jugador seleccionado en un solo paso.
+            // En torneos abiertos, cada inscripción se etiqueta con la
+            // categoría original del jugador para que el modelo relacional
+            // (que exige categoria_id) siga siendo válido.
             setInscripciones(prev => [
                 ...prev,
                 ...jugadoresEnEdicion.map(jugador => ({
                     nombrePersonalizado: '',
-                    jugadores: [jugador]
+                    jugadores: [jugador],
+                    categoriaId: esAbierto ? jugador.categoria_id : Number(categoriaId) || undefined,
                 }))
             ])
         } else {
@@ -166,7 +220,8 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
 
             setInscripciones(prev => [...prev, {
                 nombrePersonalizado: nombrePersonalizado.trim(),
-                jugadores: jugadoresEnEdicion
+                jugadores: jugadoresEnEdicion,
+                categoriaId: esAbierto ? jugadoresEnEdicion[0].categoria_id : Number(categoriaId) || undefined,
             }])
         }
 
@@ -175,22 +230,60 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
     }
 
     const guardar = async () => {
-        if (!torneo || !categoriaId) return
+        if (!torneo) return
+        if (!esAbierto && !categoriaId) return
         setIsSaving(true)
         try {
-            const response = await fetch(`/api/torneos/${torneo.id}/participantes`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    categoriaId: Number(categoriaId),
-                    participantes: inscripciones.map(inscripcion => ({
-                        nombrePersonalizado: inscripcion.nombrePersonalizado,
-                        jugadoresIds: inscripcion.jugadores.map(jugador => jugador.id)
-                    }))
+            // En torneos abiertos, las inscripciones pueden estar repartidas
+            // entre varias categorías (la de origen de cada jugador). Las
+            // agrupamos por categoriaId y hacemos una llamada por categoría
+            // porque el endpoint actual hace `deleteMany` por categoría.
+            // En torneos no abiertos, una sola llamada con la categoría del
+            // selector.
+            if (esAbierto) {
+                const grupos = new Map<number, Inscripcion[]>()
+                for (const insc of inscripciones) {
+                    const cat = insc.categoriaId
+                    if (!cat) {
+                        toast.error('Una inscripción no tiene categoría asignada')
+                        setIsSaving(false)
+                        return
+                    }
+                    if (!grupos.has(cat)) grupos.set(cat, [])
+                    grupos.get(cat)!.push(insc)
+                }
+                for (const [cat, lista] of grupos.entries()) {
+                    const response = await fetch(`/api/torneos/${torneo.id}/participantes`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            categoriaId: cat,
+                            participantes: lista.map(inscripcion => ({
+                                nombrePersonalizado: inscripcion.nombrePersonalizado,
+                                jugadoresIds: inscripcion.jugadores.map(jugador => jugador.id)
+                            }))
+                        })
+                    })
+                    if (!response.ok) {
+                        const data = await response.json().catch(() => ({}))
+                        throw new Error(data.error || 'No se pudieron guardar las inscripciones')
+                    }
+                }
+            } else {
+                const response = await fetch(`/api/torneos/${torneo.id}/participantes`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        categoriaId: Number(categoriaId),
+                        participantes: inscripciones.map(inscripcion => ({
+                            nombrePersonalizado: inscripcion.nombrePersonalizado,
+                            jugadoresIds: inscripcion.jugadores.map(jugador => jugador.id)
+                        }))
+                    })
                 })
-            })
-            const data = await response.json()
-            if (!response.ok) throw new Error(data.error || 'No se pudieron guardar las inscripciones')
+                const data = await response.json()
+                if (!response.ok) throw new Error(data.error || 'No se pudieron guardar las inscripciones')
+            }
             toast.success('Inscripciones actualizadas')
             setInscripcionesIniciales(inscripciones)
             onClose()
@@ -249,18 +342,27 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
                     </div>
                 )}
 
-                <div className="card-flush p-3 flex items-end gap-3">
-                    <Select
-                        label="Categoría"
-                        value={categoriaId}
-                        onChange={e => setCategoriaId(e.target.value)}
-                        className="w-full sm:w-72"
-                    >
-                        {categorias.map(categoria => (
-                            <option key={categoria.id} value={categoria.id}>{categoria.nombre}</option>
-                        ))}
-                    </Select>
-                </div>
+                {!esAbierto && (
+                    <div className="card-flush p-3 flex items-end gap-3">
+                        <Select
+                            label="Categoría"
+                            value={categoriaId}
+                            onChange={e => setCategoriaId(e.target.value)}
+                            className="w-full sm:w-72"
+                        >
+                            {categorias.map(categoria => (
+                                <option key={categoria.id} value={categoria.id}>{categoria.nombre}</option>
+                            ))}
+                        </Select>
+                    </div>
+                )}
+
+                {esAbierto && (
+                    <div className="banner banner-info text-xs">
+                        Torneo abierto: puedes inscribir jugadores de cualquier categoría.
+                        Cada jugador se inscribe en su categoría de origen.
+                    </div>
+                )}
 
                 <div className="grid md:grid-cols-[1fr_360px] gap-4">
                     <div className="card-flush p-4">
@@ -318,31 +420,41 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
                             </p>
                         ) : (
                             <ul className="space-y-2">
-                                {inscripciones.map((inscripcion, index) => (
-                                    <li key={`${inscripcion.id ?? 'nuevo'}-${index}`} className="card-flush p-3">
-                                        <div className="flex items-start justify-between gap-2">
-                                            <div className="min-w-0 flex-1">
-                                                <p className="text-sm font-semibold text-fg truncate">
-                                                    {inscripcion.nombrePersonalizado
-                                                        || inscripcion.jugadores.map(jugador => jugador.nombre).join(' / ')}
-                                                </p>
-                                                {inscripcion.nombrePersonalizado && (
-                                                    <p className="text-xs text-fg-muted mt-0.5">
-                                                        {inscripcion.jugadores.map(jugador => jugador.nombre).join(' / ')}
+                                {inscripciones.map((inscripcion, index) => {
+                                    const catNombre = inscripcion.categoriaId
+                                        ? (todasCategorias.find(c => c.id === inscripcion.categoriaId)?.nombre
+                                            || inscripcion.jugadores[0]?.categorias?.nombre
+                                            || null)
+                                        : null
+                                    return (
+                                        <li key={`${inscripcion.id ?? 'nuevo'}-${index}`} className="card-flush p-3">
+                                            <div className="flex items-start justify-between gap-2">
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="text-sm font-semibold text-fg truncate">
+                                                        {inscripcion.nombrePersonalizado
+                                                            || inscripcion.jugadores.map(jugador => jugador.nombre).join(' / ')}
                                                     </p>
-                                                )}
+                                                    {inscripcion.nombrePersonalizado && (
+                                                        <p className="text-xs text-fg-muted mt-0.5">
+                                                            {inscripcion.jugadores.map(jugador => jugador.nombre).join(' / ')}
+                                                        </p>
+                                                    )}
+                                                    {esAbierto && catNombre && (
+                                                        <Badge variant="neutral" className="mt-1.5 text-[10px]">{catNombre}</Badge>
+                                                    )}
+                                                </div>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => setInscripciones(prev => prev.filter((_, itemIndex) => itemIndex !== index))}
+                                                    className="text-danger hover:text-danger"
+                                                >
+                                                    Quitar
+                                                </Button>
                                             </div>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => setInscripciones(prev => prev.filter((_, itemIndex) => itemIndex !== index))}
-                                                className="text-danger hover:text-danger"
-                                            >
-                                                Quitar
-                                            </Button>
-                                        </div>
-                                    </li>
-                                ))}
+                                        </li>
+                                    )
+                                })}
                             </ul>
                         )}
                     </div>

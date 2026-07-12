@@ -6,6 +6,7 @@ import Modal from '@/components/ui/Modal'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { categoriasParaSelector } from '@/lib/torneo'
 
 type Jugador = { nombre: string }
 type Participante = { nombre_personalizado?: string | null; jugadores?: Jugador | null; miembros: { jugadores: Jugador }[] }
@@ -25,6 +26,8 @@ type Partido = {
 type Torneo = {
     id: number
     nombre: string
+    modalidad?: string
+    abierto?: boolean
     torneo_categorias: { categorias: { id: number; nombre: string } }[]
 }
 
@@ -53,7 +56,6 @@ export default function LlavesTorneoModal({
     onClose: () => void
     torneo: Torneo | null
 }) {
-    const categorias = torneo?.torneo_categorias.map(t => t.categorias) || []
     const [categoriaId, setCategoriaId] = useState('')
     const [partidos, setPartidos] = useState<Partido[]>([])
     const [loading, setLoading] = useState(false)
@@ -61,11 +63,54 @@ export default function LlavesTorneoModal({
     const [arrastre, setArrastre] = useState<{ partidoId: number; participanteId: number } | null>(null)
     const [confirmando, setConfirmando] = useState(false)
     const [ganadoresBorrador, setGanadoresBorrador] = useState<Record<number, number>>({})
+    const [todasCategorias, setTodasCategorias] = useState<{ id: number; nombre: string }[]>([])
+
+    // Cargamos el catálogo completo para soportar torneos "abiertos":
+    // DOBLES, EQUIPOS o primera categoría deben mostrar TODAS las
+    // categorías en el selector, no solo las asignadas al torneo.
+    useEffect(() => {
+        let cancelado = false
+        fetch('/api/categorias')
+            .then(r => r.ok ? r.json() : [])
+            .then(data => { if (!cancelado) setTodasCategorias(Array.isArray(data) ? data : []) })
+            .catch(() => { /* silencioso */ })
+        return () => { cancelado = true }
+    }, [])
+
+    const categorias = categoriasParaSelector(
+        torneo?.torneo_categorias,
+        todasCategorias,
+        torneo?.modalidad,
+        torneo?.abierto,
+    )
+    // En torneos abiertos las llaves se arman una sola vez sobre la
+    // categoría "primera", mezclando a todos los inscritos.
+    const esAbierto = Boolean(
+        torneo?.abierto ||
+        torneo?.modalidad === 'DOBLES' ||
+        torneo?.modalidad === 'EQUIPOS' ||
+        categorias.some(c => c.nombre === 'primera')
+    )
 
     useEffect(() => {
-        setCategoriaId(categorias[0]?.id.toString() || '')
-        setPartidos([])
-    }, [torneo])
+        // Al cambiar de torneo, seleccionamos la primera categoría SOLO si
+        // la actual ya no es válida. No limpiamos partidos ni ganadores en
+        // borrador: el useEffect de [isOpen, categoriaId] recargará y los
+        // borradores del usuario se conservan al alternar categorías.
+        if (!torneo) {
+            setCategoriaId('')
+            return
+        }
+        if (esAbierto) {
+            const primera = todasCategorias.find(c => c.nombre === 'primera') || categorias[0]
+            if (primera) setCategoriaId(String(primera.id))
+            return
+        }
+        const categoriaValida = categorias.some(c => c.id.toString() === categoriaId)
+        if (!categoriaValida) {
+            setCategoriaId(categorias[0]?.id.toString() || '')
+        }
+    }, [torneo, esAbierto, todasCategorias])
 
     const cargar = async () => {
         if (!torneo || !categoriaId) return
@@ -108,7 +153,14 @@ export default function LlavesTorneoModal({
         if (!torneo || Object.keys(ganadoresBorrador).length === 0) return
         setConfirmando(true)
         try {
-            for (const [partidoId, ganadorParticipanteId] of Object.entries(ganadoresBorrador)) {
+            // Filtramos borradores cuyos partidos ya quedaron finalizados
+            // (típicamente por un BYE sembrado automáticamente) para no
+            // provocar 409s del backend ni re-siembras innecesarias.
+            const pendientes = Object.entries(ganadoresBorrador).filter(([partidoId]) => {
+                const p = partidos.find(x => x.id === Number(partidoId))
+                return p && p.estado !== 'FINALIZADO'
+            })
+            for (const [partidoId, ganadorParticipanteId] of pendientes) {
                 const r = await fetch(`/api/torneos/${torneo.id}/llaves/${partidoId}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
@@ -117,8 +169,12 @@ export default function LlavesTorneoModal({
                 const d = await r.json()
                 if (!r.ok) throw new Error(d.error)
             }
-            toast.success('Llave confirmada y ranking actualizado')
             setGanadoresBorrador({})
+            if (pendientes.length > 0) {
+                toast.success('Llave confirmada y ranking actualizado')
+            } else {
+                toast.success('Nada nuevo que guardar')
+            }
             cargar()
         } catch (e) {
             toast.error(e instanceof Error ? e.message : 'No se pudo confirmar la llave')
@@ -150,16 +206,23 @@ export default function LlavesTorneoModal({
         >
             <div className="-mx-5 -mt-5 mb-4 card-flush overflow-hidden">
                 <div className="flex flex-wrap items-end gap-3 p-3 bg-subtle">
-                    <Select
-                        label="Categoría"
-                        value={categoriaId}
-                        onChange={e => setCategoriaId(e.target.value)}
-                        className="w-full sm:w-56"
-                    >
-                        {categorias.map(c => (
-                            <option key={c.id} value={c.id}>{c.nombre}</option>
-                        ))}
-                    </Select>
+                    {!esAbierto && (
+                        <Select
+                            label="Categoría"
+                            value={categoriaId}
+                            onChange={e => setCategoriaId(e.target.value)}
+                            className="w-full sm:w-56"
+                        >
+                            {categorias.map(c => (
+                                <option key={c.id} value={c.id}>{c.nombre}</option>
+                            ))}
+                        </Select>
+                    )}
+                    {esAbierto && (
+                        <div className="banner banner-info text-xs flex-1">
+                            Torneo abierto: las llaves se arman en <b>primera categoría</b> mezclando a todos los inscritos.
+                        </div>
+                    )}
                     <Button
                         variant="primary"
                         onClick={generar}
@@ -200,9 +263,11 @@ export default function LlavesTorneoModal({
                                 </h3>
                                 {juegos.map(p => {
                                     const finalizado = p.estado === 'FINALIZADO'
-                                    const campeon = p.ganador_participante_id === p.participante_local_id
-                                        ? p.participante_local
-                                        : p.participante_visitante
+                                    const campeon = finalizado && p.ganador_participante_id
+                                        ? (p.ganador_participante_id === p.participante_local_id
+                                            ? p.participante_local
+                                            : p.participante_visitante)
+                                        : null
                                     return (
                                         <LlaveCard
                                             key={p.id}
@@ -247,6 +312,22 @@ function LlaveCard({
     finalizado: boolean
     campeon: Participante | null
 }) {
+    // Partido fantasma: ambos lados null. Se finalizó sin ganador durante
+    // la propagación de BYE (p.ej. 5 clasificados → cupo 8 deja huecos).
+    // No se muestra como partido a jugar.
+    const fantasma = !partido.participante_local_id && !partido.participante_visitante_id
+    if (fantasma) {
+        return (
+            <div className="card-flush overflow-hidden opacity-40">
+                <div className="px-3 py-1 text-[10px] font-bold text-fg-muted bg-subtle border-b border-line uppercase tracking-wider">
+                    Partido {partido.posicion_llave}
+                </div>
+                <div className="px-3 py-2 text-xs text-fg-muted text-center italic">
+                    Sin cruce
+                </div>
+            </div>
+        )
+    }
     return (
         <div
             onDragOver={e => e.preventDefault()}
@@ -255,6 +336,9 @@ function LlaveCard({
         >
             <div className="px-3 py-1 text-[10px] font-bold text-fg-muted bg-subtle border-b border-line uppercase tracking-wider">
                 Partido {partido.posicion_llave}
+                {finalizado && (
+                    <span className="ml-2 inline-block text-[9px] text-success">✓</span>
+                )}
             </div>
             {[partido.participante_local, partido.participante_visitante].map((p, i) => {
                 const pid = i === 0 ? partido.participante_local_id : partido.participante_visitante_id

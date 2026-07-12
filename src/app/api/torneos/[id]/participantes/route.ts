@@ -10,20 +10,16 @@ export async function GET(request: Request, { params }: RouteParams) {
         const { id } = await params
         const torneoId = Number(id)
         const { searchParams } = new URL(request.url)
-        const categoriaId = Number(searchParams.get('categoriaId'))
+        const categoriaId = searchParams.get('categoriaId')
 
-        if (!categoriaId) {
-            return NextResponse.json(
-                { error: "Falta el parámetro categoriaId" },
-                { status: 400 }
-            )
-        }
+        // Si no llega categoriaId (caso típico de torneos abiertos donde un
+        // mismo jugador puede estar en varias categorías), devolvemos todos
+        // los participantes del torneo.
+        const where: any = { torneo_id: torneoId }
+        if (categoriaId) where.categoria_id = Number(categoriaId)
 
         const participantes = await prisma.torneo_participantes.findMany({
-            where: {
-                torneo_id: torneoId,
-                categoria_id: categoriaId
-            },
+            where,
             include: {
                 jugadores: {
                     include: {

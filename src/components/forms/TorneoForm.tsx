@@ -51,12 +51,20 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
     const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault()
         setIsSubmitting(true)
+        // Para DOBLES/EQUIPOS el backend asigna todas las categorías; para
+        // INDIVIDUAL respetamos la selección manual del formulario.
+        const categoriasAEnviar = modalidad === 'INDIVIDUAL' ? categoriasSeleccionadas : []
+        if (modalidad === 'INDIVIDUAL' && categoriasAEnviar.length === 0) {
+            toast.error('Selecciona al menos una categoría')
+            setIsSubmitting(false)
+            return
+        }
         const torneoData = {
             nombre,
             fecha,
             ubicacion,
             modalidad,
-            categorias: categoriasSeleccionadas,
+            categorias: categoriasAEnviar,
         }
         try {
             const response = await fetch('/api/torneos', {
@@ -117,31 +125,38 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
 
             <div>
                 <label className="label">Categorías</label>
-                {categorias.length === 0 ? (
-                    <p className="text-sm text-fg-muted">Cargando categorías…</p>
+                {modalidad === 'INDIVIDUAL' ? (
+                    categorias.length === 0 ? (
+                        <p className="text-sm text-fg-muted">Cargando categorías…</p>
+                    ) : (
+                        <div className="grid grid-cols-2 gap-2">
+                            {categorias.map((categoria) => {
+                                const checked = categoriasSeleccionadas.includes(categoria.id)
+                                return (
+                                    <label
+                                        key={categoria.id}
+                                        className={`flex items-center gap-2 px-3 py-2 rounded-md border cursor-pointer transition-colors ${
+                                            checked
+                                                ? 'border-brand bg-brand-soft text-fg'
+                                                : 'border-line text-fg-muted hover:border-line-strong hover:text-fg'
+                                        }`}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={() => handleCheckboxChange(categoria.id)}
+                                            className="h-4 w-4 rounded border-line-strong text-brand focus:ring-brand"
+                                        />
+                                        <span className="text-sm">{categoria.nombre}</span>
+                                    </label>
+                                )
+                            })}
+                        </div>
+                    )
                 ) : (
-                    <div className="grid grid-cols-2 gap-2">
-                        {categorias.map((categoria) => {
-                            const checked = categoriasSeleccionadas.includes(categoria.id)
-                            return (
-                                <label
-                                    key={categoria.id}
-                                    className={`flex items-center gap-2 px-3 py-2 rounded-md border cursor-pointer transition-colors ${
-                                        checked
-                                            ? 'border-brand bg-brand-soft text-fg'
-                                            : 'border-line text-fg-muted hover:border-line-strong hover:text-fg'
-                                    }`}
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={checked}
-                                        onChange={() => handleCheckboxChange(categoria.id)}
-                                        className="h-4 w-4 rounded border-line-strong text-brand focus:ring-brand"
-                                    />
-                                    <span className="text-sm">{categoria.nombre}</span>
-                                </label>
-                            )
-                        })}
+                    <div className="banner banner-info text-xs">
+                        Los torneos de {modalidad === 'DOBLES' ? 'dobles' : 'por equipos'} son
+                        abiertos a todas las categorías. Se asignarán automáticamente al crear el torneo.
                     </div>
                 )}
             </div>

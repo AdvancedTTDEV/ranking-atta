@@ -37,6 +37,39 @@ export async function POST(request: Request, { params }: Params) {
     })
     if (clasificados.length < 2) return NextResponse.json({ error: 'Se requieren al menos dos clasificados' }, { status: 400 })
     const cupo = siguientePotenciaDos(clasificados.length)
+    const byes = cupo - clasificados.length // participantes que quedan con BYE en R1
+    // Distribución de cruces: los BYE se reparten entre los emparejamientos
+    // para que los clasificados con bye no queden todos al final (lo que
+    // dejaría cruces fantasma en rondas internas). Con N clasificados y
+    // B byes (cupo = N + B), asignamos los últimos `byes` clasificados
+    // como "con BYE" y los demás los emparejamos en pares reales.
+    const crucesR1: { local: number | null; visitante: number | null }[] = []
+    {
+      const reales: number[] = []
+      const withBye: number[] = []
+      for (let i = 0; i < clasificados.length; i++) {
+        if (i < clasificados.length - byes) reales.push(clasificados[i])
+        else withBye.push(clasificados[i])
+      }
+      // Construimos los `cupo / 2` cruces intercalando un cruce BYE cada
+      // dos cruces reales (para distribuir los BYE a lo largo del bracket
+      // y no juntarlos al final). Si no hay reales, todos son BYE.
+      const total = cupo / 2
+      let rIdx = 0
+      let bIdx = 0
+      for (let i = 0; i < total; i++) {
+        const quedanRealesPares = (reales.length - rIdx) >= 2
+        if (bIdx < withBye.length && (i % 2 === 1 || !quedanRealesPares)) {
+          crucesR1.push({ local: withBye[bIdx++], visitante: null })
+        } else if (quedanRealesPares) {
+          crucesR1.push({ local: reales[rIdx++], visitante: reales[rIdx++] })
+        } else {
+          // quedan reales sueltos y no quedan BYE: imposible porque
+          // reales.length + byes = cupo, pero por seguridad
+          crucesR1.push({ local: reales[rIdx++] ?? null, visitante: null })
+        }
+      }
+    }
     await prisma.$transaction(async tx => {
       await tx.torneo_partidos_programados.deleteMany({ where: { torneo_id: torneoId, categoria_id: Number(categoriaId), fase: 'ELIMINACION' } })
       const rondas: { id: number }[][] = []
@@ -45,15 +78,49 @@ export async function POST(request: Request, { params }: Params) {
       while (partidosRonda >= 1) {
         const creados: { id: number }[] = []
         for (let posicion = 0; posicion < partidosRonda; posicion++) {
-          const local = ronda === 0 ? clasificados[posicion * 2] ?? null : null
-          const visitante = ronda === 0 ? clasificados[posicion * 2 + 1] ?? null : null
-          const creado = await tx.torneo_partidos_programados.create({ data: { torneo_id: torneoId, categoria_id: Number(categoriaId), participante_local_id: local, participante_visitante_id: visitante, fase: 'ELIMINACION', ronda_eliminacion: nombreRonda(partidosRonda), posicion_llave: posicion + 1 } })
+          let local: number | null = null
+          let visitante: number | null = null
+          if (ronda === 0) {
+            local = crucesR1[posicion]?.local ?? null
+            visitante = crucesR1[posicion]?.visitante ?? null
+          }
+          // IMPORTANTE: ningún partido se finaliza automáticamente, ni
+          // siquiera los cruces con un solo participante (BYE). El usuario
+          // decide cuándo confirmar cada resultado arrastrando al ganador,
+          // igual que con cualquier otro partido. Esto evita que un BYE en
+          // R1 cierre el resto del bracket sin que el usuario lo haya
+          // pedido.
+          const creado = await tx.torneo_partidos_programados.create({
+            data: {
+              torneo_id: torneoId,
+              categoria_id: Number(categoriaId),
+              participante_local_id: local,
+              participante_visitante_id: visitante,
+              ganador_participante_id: null,
+              fase: 'ELIMINACION',
+              ronda_eliminacion: nombreRonda(partidosRonda),
+              posicion_llave: posicion + 1,
+              estado: 'PENDIENTE',
+            }
+          })
           creados.push({ id: creado.id })
         }
         rondas.push(creados); partidosRonda /= 2; ronda++
       }
-      for (let r = 0; r < rondas.length - 1; r++) for (let i = 0; i < rondas[r].length; i++) await tx.torneo_partidos_programados.update({ where: { id: rondas[r][i].id }, data: { siguiente_partido_id: rondas[r + 1][Math.floor(i / 2)].id, siguiente_lado: i % 2 === 0 ? 'LOCAL' : 'VISITANTE' } })
-    }, { timeout: 20_000 })
-    return NextResponse.json({ success: true })
+      // Enlazar cada partido con su siguiente. La siembra del ganador en
+      // la siguiente ronda la hace el PATCH al confirmar el resultado.
+      for (let r = 0; r < rondas.length - 1; r++) {
+        for (let i = 0; i < rondas[r].length; i++) {
+          const actual = rondas[r][i]
+          const siguiente = rondas[r + 1][Math.floor(i / 2)]
+          const lado: 'LOCAL' | 'VISITANTE' = i % 2 === 0 ? 'LOCAL' : 'VISITANTE'
+          await tx.torneo_partidos_programados.update({
+            where: { id: actual.id },
+            data: { siguiente_partido_id: siguiente.id, siguiente_lado: lado },
+          })
+        }
+      }
+    }, { timeout: 30_000 })
+    return NextResponse.json({ success: true, byes })
   } catch (error: any) { return NextResponse.json({ error: 'Error al generar llaves', detalles: error.message }, { status: 500 }) }
 }

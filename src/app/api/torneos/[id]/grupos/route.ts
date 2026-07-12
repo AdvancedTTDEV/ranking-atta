@@ -47,12 +47,20 @@ export async function POST(request: Request, { params }: RouteParams) {
     try {
         const { id } = await params
         const torneoId = Number(id)
-        const { categoriaId, tamañoGrupo = 4 } = await request.json()
+        const { categoriaId, tamañoGrupo = 4, abierto = false } = await request.json()
 
         if (!categoriaId) return NextResponse.json({ error: "Datos incompletos" }, { status: 400 })
 
+        // En torneos abiertos, la inscripción se hace por la categoría de
+        // origen del jugador (no por la "primera"), pero los grupos se arman
+        // una sola vez sobre la categoría operativa "primera" mezclando a
+        // todos los inscritos. Por tanto, al generar grupos de un abierto
+        // tomamos TODOS los participantes del torneo sin filtrar por
+        // categoría; al guardarlos, los almacenamos bajo categoriaId.
         const participantes = await prisma.torneo_participantes.findMany({
-            where: { torneo_id: torneoId, categoria_id: Number(categoriaId) },
+            where: abierto
+                ? { torneo_id: torneoId }
+                : { torneo_id: torneoId, categoria_id: Number(categoriaId) },
             include: {
                 jugadores: true,
                 miembros: {

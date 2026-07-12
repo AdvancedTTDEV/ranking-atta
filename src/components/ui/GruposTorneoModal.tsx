@@ -17,6 +17,7 @@ import Modal from '@/components/ui/Modal'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { categoriasParaSelector } from '@/lib/torneo'
 
 interface Club { id: number; nombre: string }
 interface Jugador { id: number; nombre: string; elo: number | null; clubes?: Club }
@@ -31,7 +32,7 @@ interface TorneoGrupoParticipante { id: number; posicion: number; torneo_partici
 interface TorneoGrupo { id: number; numero_grupo: number; participantes: TorneoGrupoParticipante[] }
 interface Categoria { id: number; nombre: string }
 interface TorneoCategoria { categorias: Categoria }
-interface Torneo { id: number; nombre: string; torneo_categorias: TorneoCategoria[] }
+interface Torneo { id: number; nombre: string; modalidad?: string; abierto?: boolean; torneo_categorias: TorneoCategoria[] }
 
 interface GruposTorneoModalProps {
     isOpen: boolean
@@ -84,28 +85,71 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
 
     const gruposRef = useRef<HTMLDivElement>(null)
     const tempIdCounter = useRef(-1)
+    const [todasCategorias, setTodasCategorias] = useState<Categoria[]>([])
 
-    const categoriasDelTorneo: Categoria[] = torneo?.torneo_categorias
-        ?.map((tc: TorneoCategoria) => tc.categorias)
-        .filter(Boolean) || []
+    // Cargamos el catálogo completo de categorías para soportar torneos
+    // "abiertos" (DOBLES, EQUIPOS o primera categoría), donde el selector
+    // debe mostrar TODAS las categorías, no solo las asignadas.
+    useEffect(() => {
+        let cancelado = false
+        fetch('/api/categorias')
+            .then(r => r.ok ? r.json() : [])
+            .then(data => { if (!cancelado) setTodasCategorias(Array.isArray(data) ? data : []) })
+            .catch(() => { /* silencioso */ })
+        return () => { cancelado = true }
+    }, [])
+
+    const categoriasDelTorneo: Categoria[] = categoriasParaSelector(
+        torneo?.torneo_categorias as { categorias: Categoria }[] | undefined,
+        todasCategorias,
+        torneo?.modalidad,
+        torneo?.abierto,
+    )
+
+    // En torneos abiertos (DOBLES, EQUIPOS o primera categoría) los grupos
+    // se arman UNA sola vez, sobre la categoría "primera", mezclando a
+    // todos los inscritos del torneo (no por categoría de origen). El
+    // selector de categoría se oculta en ese caso.
+    const esAbierto = Boolean(
+        torneo?.abierto ||
+        torneo?.modalidad === 'DOBLES' ||
+        torneo?.modalidad === 'EQUIPOS' ||
+        categoriasDelTorneo.some(c => c.nombre === 'primera')
+    )
+    const categoriaOperativa = esAbierto
+        ? (todasCategorias.find(c => c.nombre === 'primera') || categoriasDelTorneo[0])
+        : categoriasDelTorneo.find(c => c.id.toString() === selectedCategoriaId) || categoriasDelTorneo[0]
+    const categoriaOperativaId = categoriaOperativa?.id ? String(categoriaOperativa.id) : ''
 
     useEffect(() => {
-        setSelectedCategoriaId('')
-        setGrupos([])
-        setInscritos([])
-        setHasChanges(false)
-        setModo('auto')
-        if (categoriasDelTorneo.length > 0) {
-            setSelectedCategoriaId(categoriasDelTorneo[0].id.toString())
+        // Al cambiar de torneo, seleccionamos la primera categoría SOLO si
+        // la actual ya no es válida. NO limpiamos grupos/inscritos/hasChanges
+        // ni reseteamos el modo: el useEffect de [isOpen, selectedCategoriaId]
+        // recargará los datos y el usuario conserva su trabajo al alternar
+        // entre categorías del mismo torneo.
+        if (!torneo) {
+            setSelectedCategoriaId('')
+            return
         }
-    }, [torneo])
+        // En abiertos forzamos SIEMPRE la primera categoría como operativa
+        // y bloqueamos el cambio manual.
+        if (esAbierto) {
+            const primera = todasCategorias.find(c => c.nombre === 'primera') || categoriasDelTorneo[0]
+            if (primera) setSelectedCategoriaId(String(primera.id))
+            return
+        }
+        const categoriaValida = categoriasDelTorneo.some(c => c.id.toString() === selectedCategoriaId)
+        if (!categoriaValida) {
+            setSelectedCategoriaId(categoriasDelTorneo[0]?.id.toString() || '')
+        }
+    }, [torneo, esAbierto, todasCategorias])
 
     const fetchGrupos = async () => {
-        if (!torneo || !selectedCategoriaId) return
+        if (!torneo || !categoriaOperativaId) return
         setIsLoading(true)
         setHasChanges(false)
         try {
-            const res = await fetch(`/api/torneos/${torneo.id}/grupos?categoriaId=${selectedCategoriaId}`)
+            const res = await fetch(`/api/torneos/${torneo.id}/grupos?categoriaId=${categoriaOperativaId}`)
             const data = await res.json()
             if (res.ok) setGrupos(data.grupos || [])
             else toast.error(data.error || 'Error al obtener grupos')
@@ -116,14 +160,17 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
         }
     }
 
-    // NOTA: este endpoint es una suposición — ajústalo al que ya tengas para
-    // listar los inscritos de una categoría (torneo_participantes + jugadores).
-    // Debe devolver: { participantes: TorneoParticipante[] }
+    // En torneos abiertos listamos TODOS los inscritos del torneo (sin
+    // filtrar por su categoría de origen), porque los grupos mezclan a
+    // todos bajo la categoría operativa "primera".
     const fetchInscritos = async () => {
-        if (!torneo || !selectedCategoriaId) return
+        if (!torneo) return
         setIsLoadingInscritos(true)
         try {
-            const res = await fetch(`/api/torneos/${torneo.id}/participantes?categoriaId=${selectedCategoriaId}`)
+            const url = esAbierto
+                ? `/api/torneos/${torneo.id}/participantes`
+                : `/api/torneos/${torneo.id}/participantes?categoriaId=${categoriaOperativaId}`
+            const res = await fetch(url)
             const data = await res.json()
             if (res.ok) setInscritos(data.participantes || [])
             else toast.error(data.error || 'Error al obtener inscritos')
@@ -135,20 +182,24 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
     }
 
     useEffect(() => {
-        if (isOpen && selectedCategoriaId) {
+        if (isOpen && categoriaOperativaId) {
             fetchGrupos()
             fetchInscritos()
         }
-    }, [isOpen, selectedCategoriaId, torneo])
+    }, [isOpen, categoriaOperativaId, torneo?.id])
 
     const handleGenerarGrupos = async () => {
-        if (!torneo) return
+        if (!torneo || !categoriaOperativaId) return
         setIsGenerating(true)
         try {
             const res = await fetch(`/api/torneos/${torneo.id}/grupos`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ categoriaId: Number(selectedCategoriaId), tamañoGrupo: 4 })
+                body: JSON.stringify({
+                    categoriaId: Number(categoriaOperativaId),
+                    tamañoGrupo: 4,
+                    abierto: esAbierto,
+                })
             })
             const data = await res.json()
             if (res.ok) {
@@ -331,7 +382,7 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    categoriaId: Number(selectedCategoriaId),
+                    categoriaId: Number(categoriaOperativaId),
                     grupos: grupos.map(g => ({
                         // id negativo = grupo nuevo creado en modo manual (aún no existe en BD)
                         grupoId: g.id > 0 ? g.id : null,
@@ -381,7 +432,7 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
             })
             console.error = originalError
             const link = document.createElement('a')
-            link.download = `grupos-${torneo?.nombre}-cat${selectedCategoriaId}.png`
+            link.download = `grupos-${torneo?.nombre}-cat${categoriaOperativaId}.png`
             link.href = dataUrl
             link.click()
             toast.success('Imagen descargada')
@@ -408,16 +459,24 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
         >
             <div className="-mx-5 -mt-5 mb-4 card-flush overflow-hidden">
                 <div className="flex flex-col sm:flex-row items-end gap-3 p-3 bg-subtle">
-                    <Select
-                        label="Categoría"
-                        value={selectedCategoriaId}
-                        onChange={(e) => setSelectedCategoriaId(e.target.value)}
-                        className="w-full sm:w-56"
-                    >
-                        {categoriasDelTorneo.map((cat: Categoria) => (
-                            <option key={cat.id} value={cat.id}>{cat.nombre}</option>
-                        ))}
-                    </Select>
+                    {!esAbierto && (
+                        <Select
+                            label="Categoría"
+                            value={selectedCategoriaId}
+                            onChange={(e) => setSelectedCategoriaId(e.target.value)}
+                            className="w-full sm:w-56"
+                        >
+                            {categoriasDelTorneo.map((cat: Categoria) => (
+                                <option key={cat.id} value={cat.id}>{cat.nombre}</option>
+                            ))}
+                        </Select>
+                    )}
+
+                    {esAbierto && (
+                        <div className="banner banner-info text-xs flex-1">
+                            Torneo abierto: los grupos se arman en <b>primera categoría</b> mezclando a todos los inscritos.
+                        </div>
+                    )}
 
                     {/* Selector de modo */}
                     <div className="w-full sm:w-auto">

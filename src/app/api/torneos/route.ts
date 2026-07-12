@@ -28,7 +28,16 @@ export async function GET(request: Request) {
       prisma.torneos.count()
     ])
 
-    return NextResponse.json({ torneos, total })
+    // `abierto` indica que el torneo admite cualquier categoría: si la
+    // modalidad es DOBLES o EQUIPOS, o si la categoría "primera" está
+    // entre las asignadas, los selectores del frontend deben mostrar
+    // TODAS las categorías, no solo las del torneo.
+    const torneosConAbierto = torneos.map(t => ({
+      ...t,
+      abierto: t.modalidad === 'DOBLES' || t.modalidad === 'EQUIPOS' || t.torneo_categorias.some(tc => tc.categorias.nombre === 'primera'),
+    }))
+
+    return NextResponse.json({ torneos: torneosConAbierto, total })
   } catch (error) {
     return NextResponse.json(
         { message: "Error al obtener torneos" },
@@ -47,8 +56,24 @@ export async function POST(request: Request) {
   if (!modalidadesValidas.includes(modalidad)) {
     return NextResponse.json({ message: 'Modalidad de torneo inválida' }, { status: 400 })
   }
-  
+
   try {
+    // Para dobles y por equipos, los torneos son "abiertos a todas las
+    // categorías": se asignan automáticamente. Para individuales, se
+    // respetan las categorías que el usuario marcó en el formulario.
+    let categoriasAsignadas: number[] = Array.isArray(data.categorias) ? data.categorias : []
+    if (modalidad === 'DOBLES' || modalidad === 'EQUIPOS') {
+      const todas = await prisma.categorias.findMany({ select: { id: true } })
+      categoriasAsignadas = todas.map(c => c.id)
+    }
+
+    if (categoriasAsignadas.length === 0) {
+      return NextResponse.json(
+        { message: 'Selecciona al menos una categoría' },
+        { status: 400 }
+      )
+    }
+
     const nuevoTorneo = await prisma.torneos.create({
       data: {
         nombre: data.nombre,
@@ -56,7 +81,7 @@ export async function POST(request: Request) {
         ubicacion: data.ubicacion,
         modalidad,
         torneo_categorias: {
-          create: data.categorias.map((catId: number) => ({
+          create: categoriasAsignadas.map((catId: number) => ({
             categoria_id: catId
           }))
         }

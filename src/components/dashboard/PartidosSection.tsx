@@ -74,8 +74,28 @@ export default function PartidosSection() {
     const [partidosTorneo, setPartidosTorneo] = useState<PartidoTorneo[]>([])
     const [loadingTorneo, setLoadingTorneo] = useState(false)
     const [partidoResultadoId, setPartidoResultadoId] = useState<number | null>(null)
+    const [partidoCompleto, setPartidoCompleto] = useState<PartidoTorneo | null>(null)
+    const [cargandoPartido, setCargandoPartido] = useState(false)
     const [borradores, setBorradores] = useState<Record<number, { sets: { local: number; visitante: number }[] }>>({})
     const [torneoActivo, setTorneoActivo] = useState<Torneo | null>(null)
+
+    // Cuando el usuario hace click en un partido, cargamos su detalle
+    // completo (sets, detalles para EQUIPOS) en una llamada aparte. Esto
+    // permite que el listado del torneo viaje en modo `lite=true` y no
+    // reviente el timeout de serverless.
+    const abrirPartido = async (partidoId: number) => {
+        if (!selectedTorneoId) return
+        setCargandoPartido(true)
+        try {
+            const data = await safeFetch(`/api/torneos/${selectedTorneoId}/partidos/${partidoId}`)
+            setPartidoCompleto(data.partido)
+            setPartidoResultadoId(partidoId)
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'No se pudo cargar el partido')
+        } finally {
+            setCargandoPartido(false)
+        }
+    }
 
     const fetchPartidos = async (page: number, limit: number) => {
         try {
@@ -104,8 +124,11 @@ export default function PartidosSection() {
     }
 
     // Cuando se selecciona un torneo, además de filtrar el recopilatorio,
-    // cargamos los partidos PROGRAMADOS de ese torneo (vía la ruta de la API
-    // de partidos de torneo sin categoriaId, para traer todas las categorías).
+    // cargamos los partidos PROGRAMADOS de ese torneo. Usamos `lite=true` para
+    // no inflar la respuesta con sets/detalles anidados (en serverless, la
+    // versión completa puede superar el timeout de 10s de Vercel). Cuando el
+    // usuario abre un partido, el modal hace su propio GET al endpoint del
+    // partido individual para traer los sets/detalles.
     const fetchPartidosTorneo = async () => {
         if (!selectedTorneoId) {
             setPartidosTorneo([])
@@ -114,7 +137,7 @@ export default function PartidosSection() {
         }
         setLoadingTorneo(true)
         try {
-            const data = await safeFetch(`/api/torneos/${selectedTorneoId}/partidos`)
+            const data = await safeFetch(`/api/torneos/${selectedTorneoId}/partidos?lite=true`)
             setPartidosTorneo((data.partidos || []) as PartidoTorneo[])
             const t = torneos.find(x => x.id.toString() === selectedTorneoId)
             if (t) setTorneoActivo(t)
@@ -321,7 +344,7 @@ export default function PartidosSection() {
                                                         <button
                                                             key={partido.id}
                                                             type="button"
-                                                            onClick={() => setPartidoResultadoId(partido.id)}
+                                                            onClick={() => abrirPartido(partido.id)}
                                                             className="w-full p-3.5 text-left hover:bg-subtle transition-colors flex flex-col sm:flex-row sm:items-center gap-2"
                                                         >
                                                             <span className="chip w-7 text-center">#{partido.orden}</span>
@@ -384,16 +407,28 @@ export default function PartidosSection() {
                 </>
             )}
 
-            {partidoResultadoId !== null && torneoActivo && (
+            {cargandoPartido && (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+                    <div className="card-elevated px-5 py-3 text-sm text-fg-muted">Cargando partido…</div>
+                </div>
+            )}
+
+            {partidoResultadoId !== null && torneoActivo && partidoCompleto != null && (
                 <PartidosResultadoModal
                     isOpen
-                    onClose={() => setPartidoResultadoId(null)}
+                    onClose={() => {
+                        setPartidoResultadoId(null)
+                        setPartidoCompleto(null)
+                    }}
                     torneo={torneoActivo}
-                    partidos={partidosTorneo as never}
+                    partidos={[partidoCompleto as never]}
                     partidoInicialId={partidoResultadoId}
                     borradores={borradores}
                     onBorradoresChange={setBorradores}
-                    onPersist={() => fetchPartidosTorneo()}
+                    onPersist={() => {
+                        setPartidoCompleto(null)
+                        fetchPartidosTorneo()
+                    }}
                 />
             )}
         </Section>
