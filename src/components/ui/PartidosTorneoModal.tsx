@@ -8,7 +8,7 @@ import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import PartidosResultadoModal from '@/components/ui/PartidosResultadoModal'
-import { categoriasParaSelector } from '@/lib/torneo'
+import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
 
 interface Categoria { id: number; nombre: string }
 interface Jugador { id: number; nombre: string }
@@ -206,15 +206,9 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         torneo?.modalidad,
         torneo?.abierto,
     )
-    // En torneos abiertos (DOBLES, EQUIPOS o primera categoría) los
-    // partidos se arman una sola vez sobre la categoría "primera", sin
-    // selector de categoría.
-    const esAbierto = Boolean(
-        torneo?.abierto ||
-        torneo?.modalidad === 'DOBLES' ||
-        torneo?.modalidad === 'EQUIPOS' ||
-        categorias.some(c => c.nombre === 'primera')
-    )
+    // Solo DOBLES y EQUIPOS son torneos totalmente abiertos. En INDIVIDUAL
+    // con varias categorías el selector se mantiene.
+    const esAbierto = esTorneoAbiertoTotal(torneo?.modalidad)
     const categoriaOperativa = esAbierto
         ? (todasCategorias.find(c => c.nombre === 'primera') || categorias[0])
         : categorias.find(c => c.id.toString() === categoriaId) || categorias[0]

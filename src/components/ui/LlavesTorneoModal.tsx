@@ -6,7 +6,7 @@ import Modal from '@/components/ui/Modal'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
-import { categoriasParaSelector } from '@/lib/torneo'
+import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
 
 type Jugador = { nombre: string }
 type Participante = { nombre_personalizado?: string | null; jugadores?: Jugador | null; miembros: { jugadores: Jugador }[] }
@@ -83,14 +83,9 @@ export default function LlavesTorneoModal({
         torneo?.modalidad,
         torneo?.abierto,
     )
-    // En torneos abiertos las llaves se arman una sola vez sobre la
-    // categoría "primera", mezclando a todos los inscritos.
-    const esAbierto = Boolean(
-        torneo?.abierto ||
-        torneo?.modalidad === 'DOBLES' ||
-        torneo?.modalidad === 'EQUIPOS' ||
-        categorias.some(c => c.nombre === 'primera')
-    )
+    // Solo DOBLES y EQUIPOS son torneos totalmente abiertos. En INDIVIDUAL
+    // con varias categorías el selector se mantiene.
+    const esAbierto = esTorneoAbiertoTotal(torneo?.modalidad)
 
     useEffect(() => {
         // Al cambiar de torneo, seleccionamos la primera categoría SOLO si

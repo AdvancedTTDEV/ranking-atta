@@ -17,7 +17,7 @@ import Modal from '@/components/ui/Modal'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
-import { categoriasParaSelector } from '@/lib/torneo'
+import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
 
 interface Club { id: number; nombre: string }
 interface Jugador { id: number; nombre: string; elo: number | null; clubes?: Club }
@@ -106,16 +106,10 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
         torneo?.abierto,
     )
 
-    // En torneos abiertos (DOBLES, EQUIPOS o primera categoría) los grupos
-    // se arman UNA sola vez, sobre la categoría "primera", mezclando a
-    // todos los inscritos del torneo (no por categoría de origen). El
-    // selector de categoría se oculta en ese caso.
-    const esAbierto = Boolean(
-        torneo?.abierto ||
-        torneo?.modalidad === 'DOBLES' ||
-        torneo?.modalidad === 'EQUIPOS' ||
-        categoriasDelTorneo.some(c => c.nombre === 'primera')
-    )
+    // Solo DOBLES y EQUIPOS son torneos totalmente abiertos. En INDIVIDUAL,
+    // aunque "primera" admita jugadores de cualquier categoría, el resto
+    // se corren por separado y el selector debe permanecer visible.
+    const esAbierto = esTorneoAbiertoTotal(torneo?.modalidad)
     const categoriaOperativa = esAbierto
         ? (todasCategorias.find(c => c.nombre === 'primera') || categoriasDelTorneo[0])
         : categoriasDelTorneo.find(c => c.id.toString() === selectedCategoriaId) || categoriasDelTorneo[0]

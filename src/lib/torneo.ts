@@ -7,30 +7,42 @@ export type CategoriaLite = { id: number; nombre: string }
  * de torneo (grupos / partidos / llaves).
  *
  * Reglas:
- *   - DOBLES y EQUIPOS: el torneo es "abierto", se muestran TODAS.
- *   - INDIVIDUAL con la categoría "primera" asignada: también es abierto
- *     (la primera es abierta a todos), se muestran TODAS.
- *   - En cualquier otro caso: solo las categorías explícitamente
+ *   - DOBLES y EQUIPOS: el torneo es "abierto total", se muestran TODAS
+ *     las categorías del catálogo ordenadas.
+ *   - INDIVIDUAL con la categoría "primera" asignada: el selector de
+ *     JUGADORES permite elegir de cualquier categoría (inscripción
+ *     abierta), pero los grupos/partidos/llaves se corren por categoría.
+ *     El selector de categoría muestra solo las del torneo.
+ *   - Cualquier otro caso: solo las categorías explícitamente
  *     asignadas al torneo en `torneo_categorias`.
  */
 export function categoriasParaSelector(
     torneoCategorias: { categorias: CategoriaLite }[] | undefined,
     todasCategorias: CategoriaLite[],
     modalidad?: torneo_modalidad | string,
-    abiertoHint?: boolean,
+    _abiertoHint?: boolean,
 ): CategoriaLite[] {
-    const esAbierto =
-        abiertoHint === true ||
-        modalidad === 'DOBLES' ||
-        modalidad === 'EQUIPOS' ||
-        (torneoCategorias ?? []).some(tc => tc.categorias?.nombre === 'primera')
-
-    if (esAbierto) {
+    if (esTorneoAbiertoTotal(modalidad)) {
         return todasCategorias
             .slice()
             .sort((a, b) => ordenCategoria(a.nombre) - ordenCategoria(b.nombre))
     }
     return (torneoCategorias ?? []).map(tc => tc.categorias)
+}
+
+/**
+ * Indica si un torneo es "totalmente abierto": modalidad DOBLES o EQUIPOS,
+ * en cuyo caso grupos, partidos y llaves se arman una sola vez sobre la
+ * categoría "primera" mezclando a todos los inscritos.
+ *
+ * IMPORTANTE: en INDIVIDUAL, aunque la categoría "primera" esté abierta a
+ * todos los jugadores (cualquiera puede inscribirse), las demás categorías
+ * se corren por separado, así que el selector debe seguir mostrándose.
+ */
+export function esTorneoAbiertoTotal(
+    modalidad?: torneo_modalidad | string,
+): boolean {
+    return modalidad === 'DOBLES' || modalidad === 'EQUIPOS'
 }
 
 // Orden estable: primera > segunda > tercera > cuarta, y al final cualquier

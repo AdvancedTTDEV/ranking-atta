@@ -24,6 +24,7 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
     const [categoriasSeleccionadas, setCategoriasSeleccionadas] = useState<number[]>([])
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [categorias, setCategorias] = useState<Categoria[]>([])
+    const [abierto, setAbierto] = useState(false)
 
     useEffect(() => {
         const fetchCategorias = async () => {
@@ -31,7 +32,14 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
                 const res = await fetch('/api/categorias')
                 if (!res.ok) throw new Error('Error al cargar categorías')
                 const data = await res.json()
-                setCategorias(data)
+                // Ocultamos "primera" del selector: los torneos abiertos
+                // (que admiten a cualquier jugador) se crean con el toggle
+                // "Abierto" en lugar de elegir la categoría primera.
+                setCategorias(
+                    Array.isArray(data)
+                        ? data.filter((c: Categoria) => c.nombre !== 'primera')
+                        : []
+                )
             } catch (error) {
                 toast.error('Error al cargar categorías')
                 console.error(error)
@@ -51,10 +59,11 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
     const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault()
         setIsSubmitting(true)
-        // Para DOBLES/EQUIPOS el backend asigna todas las categorías; para
-        // INDIVIDUAL respetamos la selección manual del formulario.
-        const categoriasAEnviar = modalidad === 'INDIVIDUAL' ? categoriasSeleccionadas : []
-        if (modalidad === 'INDIVIDUAL' && categoriasAEnviar.length === 0) {
+        // Para DOBLES/EQUIPOS y para INDIVIDUAL marcado como "abierto" el
+        // backend asigna todas las categorías. Para INDIVIDUAL no abierto
+        // respetamos la selección manual del formulario.
+        const categoriasAEnviar = (modalidad === 'INDIVIDUAL' && !abierto) ? categoriasSeleccionadas : []
+        if (modalidad === 'INDIVIDUAL' && !abierto && categoriasAEnviar.length === 0) {
             toast.error('Selecciona al menos una categoría')
             setIsSubmitting(false)
             return
@@ -64,6 +73,7 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
             fecha,
             ubicacion,
             modalidad,
+            abierto,
             categorias: categoriasAEnviar,
         }
         try {
@@ -129,28 +139,49 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
                     categorias.length === 0 ? (
                         <p className="text-sm text-fg-muted">Cargando categorías…</p>
                     ) : (
-                        <div className="grid grid-cols-2 gap-2">
-                            {categorias.map((categoria) => {
-                                const checked = categoriasSeleccionadas.includes(categoria.id)
-                                return (
-                                    <label
-                                        key={categoria.id}
-                                        className={`flex items-center gap-2 px-3 py-2 rounded-md border cursor-pointer transition-colors ${
-                                            checked
-                                                ? 'border-brand bg-brand-soft text-fg'
-                                                : 'border-line text-fg-muted hover:border-line-strong hover:text-fg'
-                                        }`}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={checked}
-                                            onChange={() => handleCheckboxChange(categoria.id)}
-                                            className="h-4 w-4 rounded border-line-strong text-brand focus:ring-brand"
-                                        />
-                                        <span className="text-sm">{categoria.nombre}</span>
-                                    </label>
-                                )
-                            })}
+                        <div className="space-y-3">
+                            <label className="flex items-center gap-2 px-3 py-2 rounded-md border border-line cursor-pointer hover:border-line-strong transition-colors">
+                                <input
+                                    type="checkbox"
+                                    checked={abierto}
+                                    onChange={e => setAbierto(e.target.checked)}
+                                    className="h-4 w-4 rounded border-line-strong text-brand focus:ring-brand"
+                                />
+                                <span className="text-sm font-semibold">Abierto</span>
+                                <span className="text-xs text-fg-muted">
+                                    — cualquier jugador puede inscribirse sin importar su categoría
+                                </span>
+                            </label>
+                            {!abierto && (
+                                <div className="grid grid-cols-2 gap-2">
+                                    {categorias.map((categoria) => {
+                                        const checked = categoriasSeleccionadas.includes(categoria.id)
+                                        return (
+                                            <label
+                                                key={categoria.id}
+                                                className={`flex items-center gap-2 px-3 py-2 rounded-md border cursor-pointer transition-colors ${
+                                                    checked
+                                                        ? 'border-brand bg-brand-soft text-fg'
+                                                        : 'border-line text-fg-muted hover:border-line-strong hover:text-fg'
+                                                }`}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={() => handleCheckboxChange(categoria.id)}
+                                                    className="h-4 w-4 rounded border-line-strong text-brand focus:ring-brand"
+                                                />
+                                                <span className="text-sm">{categoria.nombre}</span>
+                                            </label>
+                                        )
+                                    })}
+                                </div>
+                            )}
+                            {abierto && (
+                                <div className="banner banner-info text-xs">
+                                    Torneo abierto: cualquier jugador puede inscribirse, sin importar su categoría.
+                                </div>
+                            )}
                         </div>
                     )
                 ) : (

@@ -128,6 +128,10 @@ model torneos {
   fecha                DateTime               @db.Date
   ubicacion            String?                @db.VarChar(100)
   modalidad            torneo_modalidad       @default(INDIVIDUAL)
+  // Cuando es true, el torneo admite jugadores de cualquier categoría. En
+  // INDIVIDUAL el frontend puede crear torneos abiertos manualmente; en
+  // DOBLES/EQUIPOS se considera abierto por modalidad.
+  abierto              Boolean                @default(false)
   historial_categorias historial_categorias[]
   jugadores            jugadores[]
   participaciones      participaciones[]

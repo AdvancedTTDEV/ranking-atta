@@ -28,13 +28,13 @@ export async function GET(request: Request) {
       prisma.torneos.count()
     ])
 
-    // `abierto` indica que el torneo admite cualquier categoría: si la
-    // modalidad es DOBLES o EQUIPOS, o si la categoría "primera" está
-    // entre las asignadas, los selectores del frontend deben mostrar
-    // TODAS las categorías, no solo las del torneo.
+    // `abierto` indica que el torneo admite cualquier categoría. Tiene
+    // tres orígenes posibles: modalidad DOBLES/EQUIPOS, columna `abierto`
+    // persistida (torneos INDIVIDUAL marcados como abiertos al crearlos),
+    // o presencia de la categoría "primera" entre las asignadas.
     const torneosConAbierto = torneos.map(t => ({
       ...t,
-      abierto: t.modalidad === 'DOBLES' || t.modalidad === 'EQUIPOS' || t.torneo_categorias.some(tc => tc.categorias.nombre === 'primera'),
+      abierto: Boolean(t.abierto) || t.modalidad === 'DOBLES' || t.modalidad === 'EQUIPOS' || t.torneo_categorias.some(tc => tc.categorias.nombre === 'primera'),
     }))
 
     return NextResponse.json({ torneos: torneosConAbierto, total })
@@ -52,17 +52,18 @@ export async function POST(request: Request) {
   const data = await request.json()
   const modalidadesValidas = ['INDIVIDUAL', 'DOBLES', 'EQUIPOS']
   const modalidad = (data.modalidad || 'INDIVIDUAL') as torneo_modalidad
+  const abierto = Boolean(data.abierto)
 
   if (!modalidadesValidas.includes(modalidad)) {
     return NextResponse.json({ message: 'Modalidad de torneo inválida' }, { status: 400 })
   }
 
   try {
-    // Para dobles y por equipos, los torneos son "abiertos a todas las
-    // categorías": se asignan automáticamente. Para individuales, se
-    // respetan las categorías que el usuario marcó en el formulario.
+    // Para dobles, por equipos y para individuales marcados como "abierto"
+    // se asignan TODAS las categorías. Para individuales no abiertos se
+    // respetan las categorías marcadas en el formulario.
     let categoriasAsignadas: number[] = Array.isArray(data.categorias) ? data.categorias : []
-    if (modalidad === 'DOBLES' || modalidad === 'EQUIPOS') {
+    if (modalidad === 'DOBLES' || modalidad === 'EQUIPOS' || abierto) {
       const todas = await prisma.categorias.findMany({ select: { id: true } })
       categoriasAsignadas = todas.map(c => c.id)
     }
@@ -80,6 +81,7 @@ export async function POST(request: Request) {
         fecha: new Date(data.fecha),
         ubicacion: data.ubicacion,
         modalidad,
+        abierto,
         torneo_categorias: {
           create: categoriasAsignadas.map((catId: number) => ({
             categoria_id: catId
