@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { toast } from 'react-hot-toast'
 import {
     XMarkIcon,
@@ -48,6 +48,16 @@ const nombreParticipante = (participante: TorneoParticipante) =>
     || participante.miembros.map(({ jugadores }) => jugadores.nombre).join(' / ')
     || participante.jugadores?.nombre
     || 'Participante sin nombre'
+
+// Puntaje representativo del participante para ordenar el pool de mayor a
+// menor. Individual: ELO del jugador. Dobles/Equipos: promedio de los ELO
+// de los miembros (si todos son null, queda 0 y se va al final).
+const puntajeParticipante = (p: TorneoParticipante): number => {
+    if (p.jugadores) return p.jugadores.elo ?? 0
+    const elos = p.miembros.map(m => m.jugadores.elo ?? 0)
+    if (elos.length === 0) return 0
+    return elos.reduce((a, b) => a + b, 0) / elos.length
+}
 
 const eloParticipante = (participante: TorneoParticipante) => {
     const integrantes = participante.miembros.length > 0
@@ -209,8 +219,19 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
     }
 
     // ── Pool: jugadores inscritos que aún no están en ningún grupo ──────────
-    const idsEnGrupos = new Set(grupos.flatMap(g => g.participantes.map(p => p.torneo_participantes.id)))
-    const pool = inscritos.filter(p => !idsEnGrupos.has(p.id))
+    // Ordenado de mayor a menor puntaje (ELO) para que el sembrado manual
+    // sea natural: arriba los favoritos, abajo los más débiles.
+    const idsEnGrupos = useMemo(
+        () => new Set(grupos.flatMap(g => g.participantes.map(p => p.torneo_participantes.id))),
+        [grupos]
+    )
+    const pool = useMemo(
+        () => inscritos
+            .filter(p => !idsEnGrupos.has(p.id))
+            .slice()
+            .sort((a, b) => puntajeParticipante(b) - puntajeParticipante(a)),
+        [inscritos, idsEnGrupos]
+    )
 
     // ── Modo manual: añadir grupo vacío ──────────────────────────────────────
     const handleAñadirGrupo = () => {
