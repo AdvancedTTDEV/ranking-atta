@@ -2,9 +2,15 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'react-hot-toast'
+import { ExclamationTriangleIcon, CheckCircleIcon, UserGroupIcon } from '@heroicons/react/24/outline'
+import Modal from '@/components/ui/Modal'
+import { Select } from '@/components/ui/Select'
+import { Input } from '@/components/ui/Input'
+import { Button } from '@/components/ui/Button'
+import { Badge } from '@/components/ui/Badge'
 import PlayerSelector from '@/components/ui/PlayerSelector'
 
-interface Jugador { id: number; nombre: string; categoria_id: number }
+interface Jugador { id: number; nombre: string; categoria_id?: number }
 interface Categoria { id: number; nombre: string }
 interface Inscripcion { id?: number; nombrePersonalizado: string; jugadores: Jugador[] }
 interface Torneo {
@@ -26,23 +32,75 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
     const [categoriaId, setCategoriaId] = useState('')
     const [jugadoresDisponibles, setJugadoresDisponibles] = useState<Jugador[]>([])
     const [inscripciones, setInscripciones] = useState<Inscripcion[]>([])
+    const [inscripcionesIniciales, setInscripcionesIniciales] = useState<Inscripcion[]>([])
     const [jugadoresEnEdicion, setJugadoresEnEdicion] = useState<Jugador[]>([])
     const [nombrePersonalizado, setNombrePersonalizado] = useState('')
     const [isSaving, setIsSaving] = useState(false)
 
-    const categorias = torneo?.torneo_categorias.map(item => item.categorias).filter(Boolean) as Categoria[] || []
+    const categorias = useMemo(
+        () => (torneo?.torneo_categorias.map(item => item.categorias).filter(Boolean) as Categoria[]) || [],
+        [torneo]
+    )
     const modalidad = torneo?.modalidad || 'INDIVIDUAL'
-    const jugadoresUsados = useMemo(
-        () => new Set(inscripciones.flatMap(inscripcion => inscripcion.jugadores.map(jugador => jugador.id))),
+
+    // IDs de jugadores que ya forman parte de inscripciones confirmadas en
+    // el panel derecho. Se usan para ocultarlos del selector y para validar
+    // que no se vuelvan a seleccionar.
+    const jugadoresInscritosIds = useMemo(
+        () => new Set(inscripciones.flatMap(inscripcion => inscripcion.jugadores.map(j => j.id))),
         [inscripciones]
     )
 
+    // Lista que se muestra en el PlayerSelector: oculta a los que ya están
+    // confirmados en el panel de inscritos.
+    const jugadoresParaSeleccionar = useMemo(
+        () => jugadoresDisponibles.filter(j => !jugadoresInscritosIds.has(j.id)),
+        [jugadoresDisponibles, jugadoresInscritosIds]
+    )
+
+    // Firma estable de las inscripciones para detectar cambios sin guardar.
+    // Usamos los IDs persistidos (o nombres de jugadores nuevos) y los nombres
+    // personalizados; así el orden y la equivalencia de sets no afectan.
+    const firmaInscripciones = useMemo(
+        () => inscripciones
+            .map(inscripcion => ({
+                key: inscripcion.id != null
+                    ? `id-${inscripcion.id}`
+                    : `tmp-${inscripcion.jugadores.map(j => j.id).sort().join('-')}`,
+                nombre: inscripcion.nombrePersonalizado.trim(),
+                jugadores: inscripcion.jugadores.map(j => j.id).sort().join(',')
+            }))
+            .sort((a, b) => a.key.localeCompare(b.key)),
+        [inscripciones]
+    )
+
+    const firmaInicial = useMemo(
+        () => inscripcionesIniciales
+            .map(inscripcion => ({
+                key: inscripcion.id != null ? `id-${inscripcion.id}` : `tmp-${inscripcion.jugadores.map(j => j.id).sort().join('-')}`,
+                nombre: inscripcion.nombrePersonalizado.trim(),
+                jugadores: inscripcion.jugadores.map(j => j.id).sort().join(',')
+            }))
+            .sort((a, b) => a.key.localeCompare(b.key)),
+        [inscripcionesIniciales]
+    )
+
+    const hayCambiosSinGuardar = useMemo(
+        () => JSON.stringify(firmaInscripciones) !== JSON.stringify(firmaInicial),
+        [firmaInscripciones, firmaInicial]
+    )
+
     useEffect(() => {
-        setCategoriaId(categorias[0]?.id.toString() || '')
+        const primerId = categorias[0]?.id ? String(categorias[0].id) : ''
+        setCategoriaId(prev => (prev === primerId ? prev : primerId))
+    }, [categorias])
+
+    useEffect(() => {
         setInscripciones([])
+        setInscripcionesIniciales([])
         setJugadoresEnEdicion([])
         setNombrePersonalizado('')
-    }, [torneo])
+    }, [torneo?.id])
 
     useEffect(() => {
         if (!torneo || !categoriaId || !isOpen) return
@@ -55,47 +113,63 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
                 ])
                 const dataJugadores = await resJugadores.json()
                 const dataInscritos = await resInscritos.json()
-                setJugadoresDisponibles(dataJugadores.jugadores || [])
-                setInscripciones((dataInscritos.participantes || []).map((participante: any) => ({
+                const cargadas: Inscripcion[] = (dataInscritos.participantes || []).map((participante: any) => ({
                     id: participante.id,
                     nombrePersonalizado: participante.nombre_personalizado || '',
                     jugadores: participante.miembros?.map((miembro: any) => miembro.jugadores)
                         || (participante.jugadores ? [participante.jugadores] : [])
-                })))
+                }))
+                setJugadoresDisponibles(dataJugadores.jugadores || [])
+                setInscripciones(cargadas)
+                setInscripcionesIniciales(cargadas)
             } catch {
                 toast.error('No se pudieron cargar las inscripciones')
             }
         }
         cargar()
-    }, [categoriaId, isOpen, torneo])
+    }, [categoriaId, isOpen, torneo?.id])
 
     const cambiarJugador = (jugador: Jugador) => {
-        if (jugadoresUsados.has(jugador.id)) {
-            toast.error('Ese jugador ya pertenece a otra inscripción')
-            return
-        }
         setJugadoresEnEdicion(prev => prev.some(item => item.id === jugador.id)
             ? prev.filter(item => item.id !== jugador.id)
             : [...prev, jugador])
     }
 
     const agregarInscripcion = () => {
-        const cantidadValida = modalidad === 'EQUIPOS'
-            ? jugadoresEnEdicion.length >= 3
-            : jugadoresEnEdicion.length === (modalidad === 'DOBLES' ? 2 : 1)
-
-        if (!cantidadValida) {
-            const mensaje = modalidad === 'EQUIPOS'
-                ? 'Un equipo debe tener al menos 3 jugadores'
-                : modalidad === 'DOBLES' ? 'Una pareja debe tener exactamente 2 jugadores' : 'Selecciona un jugador'
-            toast.error(mensaje)
+        if (jugadoresEnEdicion.length === 0) {
+            toast.error('Selecciona al menos un jugador')
             return
         }
 
-        setInscripciones(prev => [...prev, {
-            nombrePersonalizado: nombrePersonalizado.trim(),
-            jugadores: jugadoresEnEdicion
-        }])
+        if (modalidad === 'INDIVIDUAL') {
+            // En INDIVIDUAL cada jugador es su propia inscripción; agregamos
+            // una entrada por cada jugador seleccionado en un solo paso.
+            setInscripciones(prev => [
+                ...prev,
+                ...jugadoresEnEdicion.map(jugador => ({
+                    nombrePersonalizado: '',
+                    jugadores: [jugador]
+                }))
+            ])
+        } else {
+            const cantidadValida = modalidad === 'EQUIPOS'
+                ? jugadoresEnEdicion.length >= 3
+                : jugadoresEnEdicion.length === 2
+
+            if (!cantidadValida) {
+                const mensaje = modalidad === 'EQUIPOS'
+                    ? 'Un equipo debe tener al menos 3 jugadores'
+                    : 'Una pareja debe tener exactamente 2 jugadores'
+                toast.error(mensaje)
+                return
+            }
+
+            setInscripciones(prev => [...prev, {
+                nombrePersonalizado: nombrePersonalizado.trim(),
+                jugadores: jugadoresEnEdicion
+            }])
+        }
+
         setJugadoresEnEdicion([])
         setNombrePersonalizado('')
     }
@@ -118,6 +192,7 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
             const data = await response.json()
             if (!response.ok) throw new Error(data.error || 'No se pudieron guardar las inscripciones')
             toast.success('Inscripciones actualizadas')
+            setInscripcionesIniciales(inscripciones)
             onClose()
         } catch (error) {
             toast.error(error instanceof Error ? error.message : 'Error de conexión')
@@ -129,73 +204,150 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
     if (!isOpen || !torneo) return null
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-2xl shadow-2xl flex flex-col w-full max-w-5xl max-h-[92vh]">
-                <div className="flex items-center justify-between px-6 py-4 border-b">
-                    <div>
-                        <h2 className="text-xl font-black text-slate-800">Inscripciones · {etiquetasModalidad[modalidad]}</h2>
-                        <p className="text-sm text-slate-500">{torneo.nombre}</p>
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title={`Inscripciones · ${etiquetasModalidad[modalidad]}`}
+            description={torneo.nombre}
+            size="2xl"
+            footer={
+                <>
+                    <div className="flex items-center mr-auto">
+                        {hayCambiosSinGuardar ? (
+                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-warning">
+                                <ExclamationTriangleIcon className="h-3.5 w-3.5" />
+                                Cambios sin guardar
+                            </span>
+                        ) : (
+                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success">
+                                <CheckCircleIcon className="h-3.5 w-3.5" />
+                                Todo guardado
+                            </span>
+                        )}
                     </div>
-                    <button onClick={onClose} className="text-2xl text-slate-400 hover:text-slate-700">×</button>
+                    <Button variant="secondary" onClick={onClose} disabled={isSaving}>
+                        Cancelar
+                    </Button>
+                    <Button
+                        variant="primary"
+                        onClick={guardar}
+                        isLoading={isSaving}
+                        disabled={!hayCambiosSinGuardar}
+                    >
+                        Guardar inscripciones
+                    </Button>
+                </>
+            }
+        >
+            <div className="space-y-4">
+                {hayCambiosSinGuardar && (
+                    <div className="banner banner-warning flex items-center gap-2">
+                        <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
+                        <span>
+                            Tienes cambios sin guardar. Pulsa <b>Guardar inscripciones</b> para aplicarlos.
+                        </span>
+                    </div>
+                )}
+
+                <div className="card-flush p-3 flex items-end gap-3">
+                    <Select
+                        label="Categoría"
+                        value={categoriaId}
+                        onChange={e => setCategoriaId(e.target.value)}
+                        className="w-full sm:w-72"
+                    >
+                        {categorias.map(categoria => (
+                            <option key={categoria.id} value={categoria.id}>{categoria.nombre}</option>
+                        ))}
+                    </Select>
                 </div>
 
-                <div className="px-6 py-3 bg-gray-50 border-b">
-                    <label className="text-sm font-bold text-gray-700 mr-3">Categoría:</label>
-                    <select value={categoriaId} onChange={e => setCategoriaId(e.target.value)} className="p-2 border rounded-lg bg-white">
-                        {categorias.map(categoria => <option key={categoria.id} value={categoria.id}>{categoria.nombre}</option>)}
-                    </select>
-                </div>
-
-                <div className="grid md:grid-cols-[1fr_360px] flex-1 overflow-hidden">
-                    <div className="p-5 overflow-y-auto border-r">
-                        <h3 className="font-bold text-slate-700 mb-3">
-                            Crear {modalidad === 'EQUIPOS' ? 'equipo' : modalidad === 'DOBLES' ? 'pareja' : 'participante'}
-                        </h3>
+                <div className="grid md:grid-cols-[1fr_360px] gap-4">
+                    <div className="card-flush p-4">
+                        <div className="mb-3">
+                            <h3 className="card-title">
+                                Crear {modalidad === 'EQUIPOS' ? 'equipo' : modalidad === 'DOBLES' ? 'pareja' : 'participante'}
+                            </h3>
+                            {modalidad === 'INDIVIDUAL' && (
+                                <p className="card-subtitle mt-1">
+                                    Selecciona uno o varios jugadores y pulsa <b>Añadir</b> para inscribirlos a la vez.
+                                </p>
+                            )}
+                        </div>
                         {modalidad !== 'INDIVIDUAL' && (
-                            <input
-                                value={nombrePersonalizado}
-                                onChange={e => setNombrePersonalizado(e.target.value)}
-                                placeholder="Nombre personalizado (opcional)"
-                                className="w-full mb-4 p-2 border rounded-lg"
-                            />
+                            <div className="mb-4">
+                                <Input
+                                    value={nombrePersonalizado}
+                                    onChange={e => setNombrePersonalizado(e.target.value)}
+                                    placeholder="Nombre personalizado (opcional)"
+                                />
+                            </div>
                         )}
                         <PlayerSelector
-                            jugadores={jugadoresDisponibles}
+                            jugadores={jugadoresParaSeleccionar}
                             selectedJugadores={jugadoresEnEdicion}
                             onJugadorChange={cambiarJugador}
                             onRemoveJugador={id => setJugadoresEnEdicion(prev => prev.filter(jugador => jugador.id !== id))}
                         />
-                        <button onClick={agregarInscripcion} className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg px-4 py-2.5">
-                            Añadir {modalidad === 'EQUIPOS' ? 'equipo' : modalidad === 'DOBLES' ? 'pareja' : 'participante'}
-                        </button>
-                    </div>
-
-                    <div className="p-5 overflow-y-auto bg-slate-50">
-                        <h3 className="font-bold text-slate-700 mb-3">Inscritos ({inscripciones.length})</h3>
-                        <div className="space-y-2">
-                            {inscripciones.map((inscripcion, index) => (
-                                <div key={`${inscripcion.id || 'nuevo'}-${index}`} className="bg-white border rounded-lg p-3">
-                                    <div className="flex justify-between gap-2">
-                                        <p className="font-semibold text-sm text-slate-800">
-                                            {inscripcion.nombrePersonalizado || inscripcion.jugadores.map(jugador => jugador.nombre).join(' / ')}
-                                        </p>
-                                        <button onClick={() => setInscripciones(prev => prev.filter((_, itemIndex) => itemIndex !== index))} className="text-red-500 text-sm">Quitar</button>
-                                    </div>
-                                    {inscripcion.nombrePersonalizado && <p className="text-xs text-slate-500 mt-1">{inscripcion.jugadores.map(jugador => jugador.nombre).join(' / ')}</p>}
-                                </div>
-                            ))}
-                            {inscripciones.length === 0 && <p className="text-sm text-slate-400">Aún no hay inscritos.</p>}
+                        <div className="mt-4">
+                            <Button
+                                variant="primary"
+                                onClick={agregarInscripcion}
+                                className="w-full"
+                            >
+                                {modalidad === 'INDIVIDUAL'
+                                    ? (jugadoresEnEdicion.length > 1
+                                        ? `Añadir ${jugadoresEnEdicion.length} participantes`
+                                        : 'Añadir participante')
+                                    : `Añadir ${modalidad === 'EQUIPOS' ? 'equipo' : 'pareja'}`}
+                            </Button>
                         </div>
                     </div>
-                </div>
 
-                <div className="flex justify-end gap-2 px-6 py-4 border-t bg-gray-50">
-                    <button onClick={onClose} disabled={isSaving} className="px-4 py-2 border rounded-lg">Cancelar</button>
-                    <button onClick={guardar} disabled={isSaving} className="px-5 py-2 bg-blue-600 text-white rounded-lg font-semibold disabled:bg-gray-400">
-                        {isSaving ? 'Guardando...' : 'Guardar inscripciones'}
-                    </button>
+                    <div className="card-flush p-4">
+                        <div className="mb-3 flex items-center justify-between">
+                            <h3 className="card-title inline-flex items-center gap-2">
+                                <UserGroupIcon className="h-4 w-4 text-fg-muted" />
+                                Inscritos
+                            </h3>
+                            <Badge variant="brand">{inscripciones.length}</Badge>
+                        </div>
+                        {inscripciones.length === 0 ? (
+                            <p className="text-sm text-fg-muted py-6 text-center">
+                                Aún no hay inscritos.
+                            </p>
+                        ) : (
+                            <ul className="space-y-2">
+                                {inscripciones.map((inscripcion, index) => (
+                                    <li key={`${inscripcion.id ?? 'nuevo'}-${index}`} className="card-flush p-3">
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-sm font-semibold text-fg truncate">
+                                                    {inscripcion.nombrePersonalizado
+                                                        || inscripcion.jugadores.map(jugador => jugador.nombre).join(' / ')}
+                                                </p>
+                                                {inscripcion.nombrePersonalizado && (
+                                                    <p className="text-xs text-fg-muted mt-0.5">
+                                                        {inscripcion.jugadores.map(jugador => jugador.nombre).join(' / ')}
+                                                    </p>
+                                                )}
+                                            </div>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => setInscripciones(prev => prev.filter((_, itemIndex) => itemIndex !== index))}
+                                                className="text-danger hover:text-danger"
+                                            >
+                                                Quitar
+                                            </Button>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
                 </div>
             </div>
-        </div>
+        </Modal>
     )
 }

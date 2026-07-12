@@ -1,33 +1,46 @@
 'use client'
 import { useState } from 'react'
-import AscensosDescensosForm from "@/components/forms/AscensosDescensosForm"
-import Modal from "@/components/ui/Modal"
+import AscensosDescensosForm from '@/components/forms/AscensosDescensosForm'
+import Modal from '@/components/ui/Modal'
+import { Section } from '@/components/ui/Section'
+import { Button } from '@/components/ui/Button'
+import { ArrowTrendingUpIcon, ArrowTrendingDownIcon } from '@heroicons/react/24/outline'
 
 export default function GestionPage() {
     const [showForm, setShowForm] = useState<'ascenso' | 'descenso' | null>(null)
 
     return (
-        <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
-                <button
-                    onClick={() => setShowForm('ascenso')}
-                    className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
-                >
-                    Manejar Ascensos
-                </button>
-                <button
-                    onClick={() => setShowForm('descenso')}
-                    className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
-                >
-                    Manejar Descensos
-                </button>
+        <Section
+            title="Ascensos y Descensos"
+            subtitle="Mueve jugadores entre categorías"
+            actions={
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                    <Button
+                        variant="success"
+                        leadingIcon={<ArrowTrendingUpIcon className="h-4 w-4" />}
+                        onClick={() => setShowForm('ascenso')}
+                    >
+                        Manejar Ascensos
+                    </Button>
+                    <Button
+                        variant="danger"
+                        leadingIcon={<ArrowTrendingDownIcon className="h-4 w-4" />}
+                        onClick={() => setShowForm('descenso')}
+                    >
+                        Manejar Descensos
+                    </Button>
+                </div>
+            }
+        >
+            <div className="text-center py-6 text-fg-muted text-sm">
+                Selecciona una acción arriba para comenzar.
             </div>
 
             <Modal
                 isOpen={showForm === 'ascenso'}
                 onClose={() => setShowForm(null)}
-                title="Gestión de Ascensos"
-                size="xl"
+                title="Gestión de Ascensos"
+                size="2xl"
             >
                 <AscensosDescensosForm
                     tipo="ascenso"
@@ -38,14 +51,14 @@ export default function GestionPage() {
             <Modal
                 isOpen={showForm === 'descenso'}
                 onClose={() => setShowForm(null)}
-                title="Gestión de Descensos"
-                size="xl"
+                title="Gestión de Descensos"
+                size="2xl"
             >
                 <AscensosDescensosForm
                     tipo="descenso"
                     onClose={() => setShowForm(null)}
                 />
             </Modal>
-        </div>
+        </Section>
     )
 }

@@ -1,14 +1,19 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { toast } from 'react-hot-toast'
 import Modal from '@/components/ui/Modal'
 import PlayerSelector from '@/components/ui/PlayerSelector'
+import { Button } from '@/components/ui/Button'
+import { Select } from '@/components/ui/Select'
 
 interface Jugador {
     id: number
     nombre: string
-    categoria_id: number // 🔥 Usaremos este ID directo de la raíz
+    /** ID de la categoría actual. La API /api/jugadores?all=true lo expone
+     *  como escalar raíz; algunas respuestas (no `all`) lo anidan en `categorias`. */
+    categoria_id?: number
     categorias?: {
+        id: number
         nombre: string
     }
 }
@@ -16,12 +21,18 @@ interface Jugador {
 interface Categoria {
     id: number
     nombre: string
+    elo_inicial?: number
 }
 
 interface Props {
     tipo: 'ascenso' | 'descenso'
     onClose: () => void
 }
+
+/** Devuelve el ID de categoría actual de un jugador, venga del escalar
+ *  raíz o de la relación anidada. */
+const idCategoriaActual = (j: Jugador): number | undefined =>
+    j.categoria_id ?? j.categorias?.id
 
 export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
     const [categorias, setCategorias] = useState<Categoria[]>([])
@@ -31,18 +42,40 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [showConfirmation, setShowConfirmation] = useState(false)
 
+    // Orden de categorías por rango (mayor elo_inicial = categoría más alta).
+    // Si el campo no viene, caemos al orden de la API (alfabético por nombre)
+    // y avisamos para no filtrar en silencio.
+    const categoriasPorRango = useMemo(() => {
+        if (categorias.length === 0) return [] as Categoria[]
+        const conElo = categorias.every(c => typeof c.elo_inicial === 'number')
+        if (!conElo) {
+            console.warn(
+                'AscensosDescensos: alguna categoría no tiene elo_inicial; el orden por rango puede no ser el correcto.'
+            )
+        }
+        return [...categorias].sort((a, b) => (b.elo_inicial ?? 0) - (a.elo_inicial ?? 0))
+    }, [categorias])
+
+    // Categorías que pueden gestionar ascensos/descensos.
+    // El dropdown muestra la categoría ORIGEN del jugador (de dónde sale).
+    // - Ascenso: el origen es cualquier categoría que tenga una superior,
+    //   o sea, todas excepto la más alta (primera posición del array).
+    // - Descenso: el origen es cualquier categoría que tenga una inferior,
+    //   o sea, todas excepto la más baja (última posición del array).
+    const categoriasGestionables = useMemo(() => {
+        if (categoriasPorRango.length === 0) return [] as Categoria[]
+        if (tipo === 'ascenso') {
+            return categoriasPorRango.slice(1)
+        }
+        return categoriasPorRango.slice(0, -1)
+    }, [categoriasPorRango, tipo])
+
     useEffect(() => {
         const fetchCategorias = async () => {
             try {
                 const res = await fetch('/api/categorias')
                 const data = await res.json()
-                const filtered = data.filter((cat: Categoria) =>
-                    tipo === 'ascenso' ? cat.id !== 1 : cat.id !== 4
-                )
-                setCategorias(filtered)
-                if (filtered.length > 0) {
-                    setSelectedCategoriaId(filtered[0].id.toString())
-                }
+                setCategorias(data)
             } catch (error) {
                 console.error(error)
                 toast.error('Error al obtener categorías')
@@ -51,8 +84,27 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
         fetchCategorias()
     }, [tipo])
 
+    // Cuando cambian las categorías gestionables (por tipo o por carga),
+    // mantenemos la selección si sigue siendo válida; si no, elegimos la
+    // primera gestionable.
     useEffect(() => {
-        if (!selectedCategoriaId) return
+        if (categoriasGestionables.length === 0) {
+            setSelectedCategoriaId('')
+            return
+        }
+        setSelectedCategoriaId(prev => {
+            if (prev && categoriasGestionables.some(c => c.id.toString() === prev)) {
+                return prev
+            }
+            return categoriasGestionables[0].id.toString()
+        })
+    }, [categoriasGestionables])
+
+    useEffect(() => {
+        if (!selectedCategoriaId) {
+            setJugadores([])
+            return
+        }
         const fetchJugadores = async () => {
             try {
                 const res = await fetch(`/api/jugadores?all=true&categoriaId=${selectedCategoriaId}`)
@@ -77,25 +129,61 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
         setSelectedJugadores(prev => prev.filter(j => j.id !== jugadorId))
     }
 
+    /** Dado el id de la categoría actual y el tipo de movimiento,
+     *  devuelve la categoría destino dentro del rango gestionable.
+     *  Devuelve `null` si el jugador está en una categoría que no se
+     *  debería estar moviendo (top en ascenso, bottom en descenso). */
+    const categoriaDestino = (catIdActual: number): Categoria | null => {
+        const idx = categoriasPorRango.findIndex(c => c.id === catIdActual)
+        if (idx === -1) return null
+        const nuevoIdx = tipo === 'ascenso' ? idx - 1 : idx + 1
+        if (nuevoIdx < 0 || nuevoIdx >= categoriasPorRango.length) return null
+        return categoriasPorRango[nuevoIdx]
+    }
+
     const handleSubmit = async () => {
         setIsSubmitting(true)
         try {
             const motivo = tipo === 'ascenso' ? 'Ascenso' : 'Descenso'
 
-            // 🔥 Agrupamos usando j.categoria_id directamente de la raíz
-            const grupos = selectedJugadores.reduce((acc, j) => {
-                const catId = j.categoria_id
-                if (!catId) return acc
-                if (!acc[catId]) acc[catId] = []
-                acc[catId].push(j)
-                return acc
-            }, {} as Record<number, Jugador[]>)
+            // Agrupamos por categoría actual: si un jugador está en una
+            // categoría que no aplica para el movimiento, lo omitimos con
+            // un aviso. Esto evita mandar IDs inválidos al procedimiento.
+            const grupos = new Map<number, Jugador[]>()
+            const omitidos: { jugador: Jugador; motivo: string }[] = []
 
-            for (const [catId, jugadoresGrupo] of Object.entries(grupos)) {
-                const newCategoriaId = tipo === 'ascenso'
-                    ? Number(catId) - 1
-                    : Number(catId) + 1
+            for (const j of selectedJugadores) {
+                const catId = idCategoriaActual(j)
+                if (catId === undefined) {
+                    omitidos.push({ jugador: j, motivo: 'sin categoría' })
+                    continue
+                }
+                const destino = categoriaDestino(catId)
+                if (!destino) {
+                    omitidos.push({
+                        jugador: j,
+                        motivo: tipo === 'ascenso'
+                            ? 'ya está en la categoría más alta'
+                            : 'ya está en la categoría más baja',
+                    })
+                    continue
+                }
+                if (!grupos.has(destino.id)) grupos.set(destino.id, [])
+                grupos.get(destino.id)!.push(j)
+            }
 
+            if (omitidos.length > 0) {
+                const nombres = omitidos.map(o => `${o.jugador.nombre} (${o.motivo})`).join(', ')
+                toast.error(`Omitidos: ${nombres}`)
+            }
+
+            if (grupos.size === 0) {
+                setIsSubmitting(false)
+                setShowConfirmation(false)
+                return
+            }
+
+            for (const [newCategoriaId, jugadoresGrupo] of grupos) {
                 const res = await fetch('/api/jugadores/cambiar-categoria', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -126,54 +214,45 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
     }
 
     const getCategoriaChange = (jugador: Jugador) => {
-        if (!jugador.categorias) return { actual: 'Desconocida', nueva: 'Desconocida' }
-        const categoriaActual = jugador.categorias.nombre
-        let nuevaCategoria = 'Desconocida'
-        if (tipo === 'ascenso') {
-            switch (categoriaActual.toLowerCase()) { // ToLowerCase para evitar sustos con mayúsculas
-                case 'segunda': nuevaCategoria = 'Primera'; break;
-                case 'tercera': nuevaCategoria = 'Segunda'; break;
-                case 'cuarta': nuevaCategoria = 'Tercera'; break;
-            }
-        } else {
-            switch (categoriaActual.toLowerCase()) {
-                case 'primera': nuevaCategoria = 'Segunda'; break;
-                case 'segunda': nuevaCategoria = 'Tercera'; break;
-                case 'tercera': nuevaCategoria = 'Cuarta'; break;
-            }
+        const catId = idCategoriaActual(jugador)
+        const actual = jugador.categorias?.nombre
+            ?? categorias.find(c => c.id === catId)?.nombre
+            ?? 'Desconocida'
+        const destino = catId !== undefined ? categoriaDestino(catId) : null
+        return {
+            actual,
+            nueva: destino?.nombre ?? 'Desconocida',
         }
-        return { actual: categoriaActual, nueva: nuevaCategoria }
     }
 
     const esAscenso = tipo === 'ascenso'
-    const colorBoton = esAscenso ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
 
     return (
         <>
             {/* Selector de categoría */}
-            <div className="flex items-center gap-4 mb-4 pb-4 border-b border-gray-200">
-                <label className="text-sm font-bold text-gray-700 shrink-0">Categoría:</label>
-                <select
+            <div className="flex flex-wrap items-center gap-3 mb-4 pb-4 border-b border-line">
+                <Select
+                    label="Categoría"
                     value={selectedCategoriaId}
                     onChange={(e) => setSelectedCategoriaId(e.target.value)}
-                    className="p-2 border border-gray-300 rounded-lg bg-white font-medium focus:ring-2 focus:ring-blue-500 text-sm"
+                    className="w-auto min-w-[14rem]"
                 >
-                    {categorias.map(cat => (
+                    {categoriasGestionables.map(cat => (
                         <option key={cat.id} value={cat.id}>{cat.nombre}</option>
                     ))}
-                </select>
-                <span className="text-xs text-gray-400">
+                </Select>
+                <p className="text-xs text-fg-muted">
                     Cambia de categoría para seleccionar jugadores de cada una
-                </span>
+                </p>
             </div>
 
             {/* Dos columnas */}
             <div className="flex gap-4 h-[50vh]">
 
                 {/* Izquierda — buscador y checkboxes */}
-                <div className="flex-1 flex flex-col border border-gray-200 rounded-xl overflow-hidden">
-                    <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 shrink-0">
-                        <h3 className="text-sm font-bold text-gray-700">Jugadores disponibles</h3>
+                <div className="flex-1 flex flex-col card overflow-hidden">
+                    <div className="card-header-row bg-surface-2">
+                        <h3 className="text-sm font-semibold text-fg">Jugadores disponibles</h3>
                     </div>
                     <div className="flex-1 overflow-y-auto p-4">
                         <PlayerSelector
@@ -187,19 +266,19 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
                 </div>
 
                 {/* Derecha — seleccionados */}
-                <div className="w-72 flex flex-col border border-gray-200 rounded-xl overflow-hidden shrink-0">
-                    <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 shrink-0">
-                        <h3 className="text-sm font-bold text-gray-700">
+                <div className="w-72 flex flex-col card overflow-hidden shrink-0">
+                    <div className="card-header-row bg-surface-2">
+                        <h3 className="text-sm font-semibold text-fg flex items-center gap-2">
                             {esAscenso ? 'A ascender' : 'A descender'}
-                            <span className={`ml-2 text-xs font-bold px-2 py-0.5 rounded-full ${esAscenso ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            <span className={`badge ${esAscenso ? 'badge-success' : 'badge-danger'}`}>
                                 {selectedJugadores.length}
                             </span>
                         </h3>
                     </div>
-                    <div className="flex-1 overflow-y-auto p-3">
+                    <div className="flex-1 overflow-y-auto p-3 scrollbar-thin">
                         {selectedJugadores.length === 0 ? (
-                            <div className="text-center text-gray-400 text-sm mt-8">
-                                <p className="text-2xl mb-2">👈</p>
+                            <div className="text-center text-fg-muted text-sm mt-8">
+                                <p className="text-2xl mb-2">←</p>
                                 <p>Selecciona jugadores de la lista</p>
                             </div>
                         ) : (
@@ -207,21 +286,30 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
                                 {selectedJugadores.map((j, idx) => {
                                     const { actual, nueva } = getCategoriaChange(j)
                                     return (
-                                        <li key={j.id} className={`border rounded-lg px-3 py-2 text-sm ${esAscenso ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
+                                        <li
+                                            key={j.id}
+                                            className={`rounded-lg px-3 py-2 text-sm border ${
+                                                esAscenso
+                                                    ? 'bg-success-soft border-success/30'
+                                                    : 'bg-danger-soft border-danger/30'
+                                            }`}
+                                        >
                                             <div className="flex items-center justify-between">
-                                                <span className="flex items-center gap-2">
-                                                    <span className="text-gray-400 text-xs w-4">{idx + 1}.</span>
-                                                    <span className="font-medium text-gray-800">{j.nombre}</span>
+                                                <span className="flex items-center gap-2 min-w-0">
+                                                    <span className="text-fg-muted text-xs w-4 shrink-0">{idx + 1}.</span>
+                                                    <span className="font-medium text-fg truncate">{j.nombre}</span>
                                                 </span>
                                                 <button
+                                                    type="button"
                                                     onClick={() => handleRemoveJugador(j.id)}
-                                                    className="text-red-400 hover:text-red-600 ml-2 shrink-0"
+                                                    className="text-fg-muted hover:text-danger ml-2 shrink-0"
+                                                    aria-label="Quitar"
                                                 >
                                                     ✕
                                                 </button>
                                             </div>
-                                            <p className="text-xs text-gray-400 mt-1 ml-5">
-                                                {actual} → <span className="font-semibold text-gray-600">{nueva}</span>
+                                            <p className="text-xs text-fg-muted mt-1 ml-5">
+                                                {actual} → <span className="font-semibold text-fg">{nueva}</span>
                                             </p>
                                         </li>
                                     )
@@ -233,25 +321,22 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
             </div>
 
             {/* Footer */}
-            <div className="flex justify-between items-center mt-4 pt-4 border-t border-gray-200">
-                <span className="text-sm text-gray-500">
+            <div className="flex flex-wrap justify-between items-center gap-2 mt-4 pt-4 border-t border-line">
+                <span className="text-sm text-fg-muted">
                     {selectedJugadores.length} jugador{selectedJugadores.length !== 1 ? 'es' : ''} seleccionado{selectedJugadores.length !== 1 ? 's' : ''}
                 </span>
                 <div className="flex gap-2">
-                    <button
-                        onClick={onClose}
-                        disabled={isSubmitting}
-                        className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 text-sm font-medium"
-                    >
+                    <Button type="button" variant="secondary" onClick={onClose} disabled={isSubmitting}>
                         Cancelar
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                        type="button"
+                        variant={esAscenso ? 'success' : 'danger'}
                         onClick={() => setShowConfirmation(true)}
                         disabled={selectedJugadores.length === 0 || isSubmitting}
-                        className={`px-6 py-2 text-white rounded-lg text-sm font-semibold disabled:bg-gray-400 ${colorBoton}`}
                     >
                         {esAscenso ? 'Ascender seleccionados' : 'Descender seleccionados'}
-                    </button>
+                    </Button>
                 </div>
             </div>
 
@@ -262,41 +347,40 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
                 title={`Confirmar ${esAscenso ? 'ascensos' : 'descensos'}`}
             >
                 <div className="mb-6">
-                    <p className="mb-4">Estás a punto de realizar los siguientes cambios:</p>
-                    <div className="border rounded-md p-4 max-h-60 overflow-y-auto">
-                        <ul className="space-y-2">
+                    <p className="mb-4 text-fg-muted">Estás a punto de realizar los siguientes cambios:</p>
+                    <div className="card-flush p-2 max-h-60 overflow-y-auto scrollbar-thin">
+                        <ul className="divide-y divide-line">
                             {selectedJugadores.map(jugador => {
                                 const { actual, nueva } = getCategoriaChange(jugador)
                                 return (
-                                    <li key={jugador.id} className="flex justify-between items-center py-2 border-b">
-                                        <span className="font-medium">{jugador.nombre}</span>
+                                    <li key={jugador.id} className="flex justify-between items-center py-2 px-2">
+                                        <span className="font-medium text-fg">{jugador.nombre}</span>
                                         <div className="flex items-center gap-2 text-sm">
-                                            <span className="text-gray-600">{actual}</span>
-                                            <span className="text-gray-400">→</span>
-                                            <span className="font-semibold">{nueva}</span>
+                                            <span className="text-fg-muted">{actual}</span>
+                                            <span className="text-fg-muted">→</span>
+                                            <span className="font-semibold text-fg">{nueva}</span>
                                         </div>
                                     </li>
                                 )
                             })}
                         </ul>
                     </div>
-                    <p className="mt-4 text-sm text-red-600">⚠️ Esta acción no se puede deshacer. ¿Desea continuar?</p>
+                    <div className="banner banner-warning mt-4">
+                        Esta acción no se puede deshacer. ¿Desea continuar?
+                    </div>
                 </div>
-                <div className="flex justify-end space-x-3">
-                    <button
-                        onClick={() => setShowConfirmation(false)}
-                        className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                        disabled={isSubmitting}
-                    >
+                <div className="flex justify-end gap-2">
+                    <Button type="button" variant="secondary" onClick={() => setShowConfirmation(false)} disabled={isSubmitting}>
                         Cancelar
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                        type="button"
+                        variant={esAscenso ? 'success' : 'danger'}
                         onClick={handleSubmit}
-                        disabled={isSubmitting}
-                        className={`px-4 py-2 rounded-md text-white disabled:bg-gray-400 ${colorBoton}`}
+                        isLoading={isSubmitting}
                     >
-                        {isSubmitting ? 'Procesando...' : 'Confirmar cambios'}
-                    </button>
+                        {isSubmitting ? 'Procesando…' : 'Confirmar cambios'}
+                    </Button>
                 </div>
             </Modal>
         </>

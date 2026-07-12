@@ -1,59 +1,29 @@
 'use client'
 
-import useAuthAndDb from '@/app/hooks/useAuthAndDb'
-import Modal from '@/components/ui/Modal'
+import Header from '@/components/ui/Header'
+import { PageHeader } from '@/components/ui/PageHeader'
+import { DashboardGate } from '@/components/ui/DashboardGate'
 import JugadoresWrapper from '@/components/dashboard/JugadoresWrapper'
-import JugadorSearchAutocomplete from "@/components/dashboard/JugadorSearchAutoComplete";
+import JugadorSearchAutocomplete from '@/components/dashboard/JugadorSearchAutoComplete'
 
 export default function JugadoresPage() {
-    const {
-        session,
-        status,
-        modalOpen,
-        handleLogin,
-        dbReady,
-        loading,
-    } = useAuthAndDb()
-
     return (
         <>
-            {/* Modal de login si no hay sesión */}
-            <Modal
-                isOpen={modalOpen}
-                onClose={() => {}}
-                title="Inicia sesión"
-            >
-                <p className="mb-4">Debes iniciar sesión para acceder a esta página</p>
-                <button
-                    onClick={handleLogin}
-                    className="w-full bg-red-500 text-white py-2 rounded-md hover:bg-red-600"
-                >
-                    Iniciar sesión con Google
-                </button>
-            </Modal>
-
-            {/* Mensajes mientras se conecta a la DB */}
-            {loading && <p className="text-center mt-4">Conectando a la base de datos...</p>}
-
-            {/* Contenido del dashboard solo si hay sesión y DB lista */}
-            {session && dbReady && (
-                <div className="space-y-6">
-                    <div className="bg-white rounded-lg shadow p-4">
-                        <h1 className="text-2xl font-bold text-gray-800">Jugadores</h1>
-                        <p className="text-gray-600">visualiza el ranking</p>
-                    </div>
-                    <JugadorSearchAutocomplete/>
-                    <JugadoresWrapper />
-
-                </div>
-            )}
-
-            {/* Mensaje si la DB no está lista */}
-            {session && !dbReady && !loading && (
-                <p className="text-center mt-4 text-red-500">
-                    La base de datos no está lista. Intenta recargar.
-                </p>
-            )}
+            <Header />
+            <div className="md:pl-64 min-h-screen bg-canvas">
+                <main className="page-shell">
+                    <DashboardGate>
+                        <PageHeader
+                            title="Jugadores"
+                            subtitle="Busca y administra los jugadores del club"
+                        />
+                        <div className="space-y-6">
+                            <JugadorSearchAutocomplete />
+                            <JugadoresWrapper />
+                        </div>
+                    </DashboardGate>
+                </main>
+            </div>
         </>
     )
 }

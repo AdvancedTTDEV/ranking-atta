@@ -1,6 +1,22 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { toast } from 'react-hot-toast'
+import {
+    XMarkIcon,
+    PlayIcon,
+    ArrowDownTrayIcon,
+    PlusIcon,
+    ExclamationTriangleIcon,
+    ArrowsRightLeftIcon,
+    ArrowsPointingOutIcon,
+    Bars3Icon,
+    TrophyIcon,
+    CheckIcon,
+} from '@heroicons/react/24/outline'
+import Modal from '@/components/ui/Modal'
+import { Select } from '@/components/ui/Select'
+import { Button } from '@/components/ui/Button'
+import { Badge } from '@/components/ui/Badge'
 
 interface Club { id: number; nombre: string }
 interface Jugador { id: number; nombre: string; elo: number | null; clubes?: Club }
@@ -380,55 +396,47 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
     if (!isOpen || !torneo) return null
 
     const categoriaActual = categoriasDelTorneo.find(c => c.id.toString() === selectedCategoriaId)
+    const totalIntegrantes = grupos.reduce((acc, g) => acc + g.participantes.length, 0)
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-2xl shadow-2xl flex flex-col w-full h-full max-w-[96vw] max-h-[96vh]">
-
-                {/* Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
-                    <div>
-                        <h2 className="text-xl font-black text-slate-800">Grupos del Torneo</h2>
-                        <p className="text-sm text-slate-500 font-medium">{torneo.nombre}</p>
-                    </div>
-                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full p-2 transition-colors">
-                        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                    </button>
-                </div>
-
-                {/* Controles */}
-                <div className="flex flex-col sm:flex-row items-end gap-3 px-6 py-4 bg-gray-50 border-b border-gray-200 shrink-0">
-                    <div className="w-full sm:w-56">
-                        <label className="block mb-1 text-sm font-bold text-gray-700">Categoría</label>
-                        <select
-                            value={selectedCategoriaId}
-                            onChange={(e) => setSelectedCategoriaId(e.target.value)}
-                            className="w-full p-2.5 border border-gray-300 rounded-lg bg-white font-medium focus:ring-2 focus:ring-slate-500"
-                        >
-                            {categoriasDelTorneo.map((cat: Categoria) => (
-                                <option key={cat.id} value={cat.id}>{cat.nombre}</option>
-                            ))}
-                        </select>
-                    </div>
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title="Grupos del torneo"
+            description={torneo.nombre}
+            size="full"
+        >
+            <div className="-mx-5 -mt-5 mb-4 card-flush overflow-hidden">
+                <div className="flex flex-col sm:flex-row items-end gap-3 p-3 bg-subtle">
+                    <Select
+                        label="Categoría"
+                        value={selectedCategoriaId}
+                        onChange={(e) => setSelectedCategoriaId(e.target.value)}
+                        className="w-full sm:w-56"
+                    >
+                        {categoriasDelTorneo.map((cat: Categoria) => (
+                            <option key={cat.id} value={cat.id}>{cat.nombre}</option>
+                        ))}
+                    </Select>
 
                     {/* Selector de modo */}
                     <div className="w-full sm:w-auto">
-                        <label className="block mb-1 text-sm font-bold text-gray-700">Modo</label>
-                        <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden">
+                        <label className="label">Modo</label>
+                        <div className="inline-flex rounded-md border border-line overflow-hidden bg-surface">
                             <button
+                                type="button"
                                 onClick={() => setModo('auto')}
-                                className={`px-4 py-2.5 text-sm font-semibold transition-colors ${
-                                    modo === 'auto' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-gray-100'
+                                className={`px-4 py-2 text-sm font-semibold transition-colors ${
+                                    modo === 'auto' ? 'bg-subtle text-fg' : 'text-fg-muted hover:bg-subtle'
                                 }`}
                             >
                                 Automático
                             </button>
                             <button
+                                type="button"
                                 onClick={() => setModo('manual')}
-                                className={`px-4 py-2.5 text-sm font-semibold transition-colors border-l border-gray-300 ${
-                                    modo === 'manual' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-gray-100'
+                                className={`px-4 py-2 text-sm font-semibold transition-colors border-l border-line ${
+                                    modo === 'manual' ? 'bg-subtle text-fg' : 'text-fg-muted hover:bg-subtle'
                                 }`}
                             >
                                 Manual
@@ -438,265 +446,291 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
 
                     <div className="flex gap-2 w-full sm:w-auto flex-wrap">
                         {modo === 'auto' && (
-                            <button
+                            <Button
+                                variant="success"
                                 onClick={handleGenerarGrupos}
-                                disabled={isGenerating}
-                                className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700 text-white px-5 py-2.5 rounded-lg shadow font-semibold transition-colors disabled:bg-gray-400 text-sm"
+                                isLoading={isGenerating}
+                                leadingIcon={<PlayIcon className="h-4 w-4" />}
                             >
-                                {isGenerating ? 'Calculando...' : grupos.length > 0 ? 'Regenerar' : 'Generar Grupos'}
-                            </button>
+                                {isGenerating ? 'Calculando...' : grupos.length > 0 ? 'Regenerar' : 'Generar grupos'}
+                            </Button>
                         )}
                         {modo === 'manual' && (
-                            <button
+                            <Button
+                                variant="secondary"
                                 onClick={handleAñadirGrupo}
-                                className="flex-1 sm:flex-none bg-slate-700 hover:bg-slate-800 text-white px-5 py-2.5 rounded-lg shadow font-semibold transition-colors text-sm"
+                                leadingIcon={<PlusIcon className="h-4 w-4" />}
                             >
-                                + Añadir Grupo
-                            </button>
+                                Añadir grupo
+                            </Button>
                         )}
                         {hasChanges && (
-                            <button
+                            <Button
+                                variant="warning"
                                 onClick={handleGuardarCambios}
-                                disabled={isSaving}
-                                className="flex-1 sm:flex-none bg-amber-500 hover:bg-amber-600 text-white px-5 py-2.5 rounded-lg shadow font-semibold transition-colors disabled:bg-gray-400 text-sm animate-pulse"
+                                isLoading={isSaving}
+                                className="animate-pulse-soft"
                             >
                                 {isSaving ? 'Guardando...' : 'Guardar cambios'}
-                            </button>
+                            </Button>
                         )}
-                        {grupos.length > 0 && (
-                            <button
+                        {grupos.length > 0 && onOpenPartidos && (
+                            <Button
+                                variant="primary"
                                 onClick={onOpenPartidos}
-                                className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg shadow font-semibold transition-colors text-sm"
+                                leadingIcon={<TrophyIcon className="h-4 w-4" />}
                             >
                                 Partidos y hojas
-                            </button>
+                            </Button>
                         )}
                         {grupos.length > 0 && (
-                            <button
+                            <Button
+                                variant="secondary"
                                 onClick={handleDescargar}
-                                disabled={isDownloading}
-                                className="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg shadow font-semibold transition-colors disabled:bg-gray-400 text-sm"
+                                isLoading={isDownloading}
+                                leadingIcon={<ArrowDownTrayIcon className="h-4 w-4" />}
                             >
                                 {isDownloading ? 'Generando...' : 'Descargar'}
-                            </button>
+                            </Button>
                         )}
                     </div>
-                    {hasChanges && (
-                        <p className="text-xs text-amber-600 font-medium sm:ml-auto">
-                            ⚠️ Tienes cambios sin guardar
-                        </p>
-                    )}
                 </div>
+            </div>
 
-                {/* Overlay para cerrar menús al hacer clic fuera */}
-                {(swapMenu || poolMenu !== null) && (
-                    <div className="fixed inset-0 z-30" onClick={closeMenus} />
-                )}
+            {/* Overlay para cerrar menús al hacer clic fuera */}
+            {(swapMenu || poolMenu !== null) && (
+                <div className="fixed inset-0 z-30" onClick={closeMenus} />
+            )}
 
-                {/* Contenido scrolleable */}
-                <div className="flex-1 overflow-y-auto p-6">
-
-                    {/* Pool de jugadores sin asignar — solo en modo manual */}
-                    {modo === 'manual' && (
-                        <div
-                            className={`mb-6 rounded-xl border-2 border-dashed p-4 transition-colors ${
-                                dragOverPool ? 'border-blue-400 bg-blue-50' : 'border-gray-300 bg-white'
-                            }`}
-                            onDragOver={(e) => { e.preventDefault(); setDragOverPool(true) }}
-                            onDragLeave={() => setDragOverPool(false)}
-                            onDrop={handleDropOnPool}
-                        >
-                            <h4 className="text-sm font-black text-slate-700 mb-3">
-                                Jugadores sin asignar ({isLoadingInscritos ? '...' : pool.length})
-                            </h4>
-                            {pool.length === 0 ? (
-                                <p className="text-sm text-slate-400">
-                                    {isLoadingInscritos ? 'Cargando inscritos...' : 'Todos los jugadores están asignados a un grupo.'}
-                                </p>
-                            ) : (
-                                <div className="flex flex-wrap gap-2">
-                                    {pool.map((p) => (
-                                        <div key={p.id} className="relative">
-                                            <button
-                                                draggable
-                                                onDragStart={() => setDraggingFromPool(p.id)}
-                                                onDragEnd={handleDragEnd}
-                                                onClick={() => togglePoolMenu(p.id)}
-                                                className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-full pl-3 pr-2 py-1.5 text-sm font-semibold text-slate-700 cursor-grab active:cursor-grabbing transition-colors"
-                                            >
-                                                {nombreParticipante(p)}
-                                                <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
-                                                    {eloParticipante(p)}
-                                                </span>
-                                            </button>
-                                            {poolMenu === p.id && (
-                                                <div className="absolute z-40 top-full left-0 mt-1 w-56 bg-white rounded-lg shadow-xl border border-gray-200 max-h-56 overflow-y-auto">
-                                                    <div className="px-3 py-2 text-xs font-bold text-slate-400 border-b border-gray-100">
-                                                        Asignar a grupo
-                                                    </div>
-                                                    {grupos.length === 0 ? (
-                                                        <p className="px-3 py-2 text-xs text-slate-400">Añade un grupo primero</p>
-                                                    ) : (
-                                                        grupos.map(g => (
-                                                            <button
-                                                                key={g.id}
-                                                                onClick={(e) => { e.stopPropagation(); asignarDesdePool(p.id, g.id) }}
-                                                                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 transition-colors"
-                                                            >
-                                                                Grupo {g.numero_grupo} <span className="text-slate-400 text-xs">({g.participantes.length})</span>
-                                                            </button>
-                                                        ))
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {isLoading ? (
-                        <div className="flex justify-center items-center h-full">
-                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-slate-700"></div>
-                        </div>
-                    ) : grupos.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-full text-center">
-                            <div className="text-6xl mb-4">🎾</div>
-                            <h3 className="text-xl font-bold text-gray-900 mb-2">Aún no hay grupos generados</h3>
-                            <p className="text-gray-500 max-w-md">
-                                {modo === 'auto'
-                                    ? <>Haz clic en <strong>Generar Grupos</strong> para distribuir jugadores usando el sistema Serpiente basado en ELO.</>
-                                    : <>Haz clic en <strong>+ Añadir Grupo</strong> y arrastra jugadores desde la lista de arriba.</>}
+            <div className="min-h-[300px]">
+                {/* Pool de jugadores sin asignar — solo en modo manual */}
+                {modo === 'manual' && (
+                    <div
+                        className={`mb-4 rounded-xl border-2 border-dashed p-4 transition-colors ${
+                            dragOverPool
+                                ? 'border-brand bg-brand-soft'
+                                : 'border-line bg-surface'
+                        }`}
+                        onDragOver={(e) => { e.preventDefault(); setDragOverPool(true) }}
+                        onDragLeave={() => setDragOverPool(false)}
+                        onDrop={handleDropOnPool}
+                    >
+                        <h4 className="text-sm font-bold text-fg mb-3 inline-flex items-center gap-2">
+                            <ArrowsPointingOutIcon className="h-4 w-4 text-fg-muted" />
+                            Jugadores sin asignar ({isLoadingInscritos ? '...' : pool.length})
+                        </h4>
+                        {pool.length === 0 ? (
+                            <p className="text-sm text-fg-muted">
+                                {isLoadingInscritos ? 'Cargando inscritos...' : 'Todos los jugadores están asignados a un grupo.'}
                             </p>
-                        </div>
-                    ) : (
-                        <div ref={gruposRef} className="bg-slate-50 rounded-xl p-6">
-                            <div className="text-center mb-6">
-                                <h3 className="text-2xl font-black text-slate-800">{torneo.nombre}</h3>
-                                <p className="text-slate-500 font-medium">Categoría {categoriaActual?.nombre} — Distribución de Grupos</p>
-                                {hasChanges && <p className="text-xs text-amber-500 mt-1">Arrastra o haz clic en un jugador para reorganizar · Guarda cuando termines</p>}
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
-                                {grupos.map((grupo) => (
-                                    <div
-                                        key={grupo.id}
-                                        className={`border-2 rounded-xl shadow-sm bg-white overflow-hidden transition-all ${
-                                            dragOver?.grupoId === grupo.id ? 'border-blue-400 shadow-blue-100 shadow-lg' : 'border-gray-200'
-                                        }`}
-                                        onDragOver={(e) => handleDragOverGroup(e, grupo.id)}
-                                        onDrop={() => handleDrop(grupo.id, -1)}
-                                    >
-                                        <div className="bg-slate-800 text-white py-3 px-4 text-center font-black tracking-widest text-sm flex items-center justify-between">
-                                            <span>
-                                                GRUPO {grupo.numero_grupo}
-                                                <span className="ml-2 text-slate-400 text-xs font-normal">({grupo.participantes.length})</span>
-                                            </span>
-                                            {modo === 'manual' && grupo.participantes.length === 0 && (
-                                                <button
-                                                    onClick={() => handleEliminarGrupoVacio(grupo.id)}
-                                                    title="Eliminar grupo vacío"
-                                                    className="text-slate-400 hover:text-red-400 transition-colors"
-                                                >
-                                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                                    </svg>
-                                                </button>
-                                            )}
-                                        </div>
-                                        {grupo.participantes.length === 0 ? (
-                                            <div className="p-6 text-center text-xs text-slate-300 font-medium">
-                                                Arrastra jugadores aquí
+                        ) : (
+                            <div className="flex flex-wrap gap-2">
+                                {pool.map((p) => (
+                                    <div key={p.id} className="relative">
+                                        <button
+                                            type="button"
+                                            draggable
+                                            onDragStart={() => setDraggingFromPool(p.id)}
+                                            onDragEnd={handleDragEnd}
+                                            onClick={() => togglePoolMenu(p.id)}
+                                            className="flex items-center gap-1.5 bg-subtle hover:bg-surface-2 border border-line rounded-full pl-3 pr-2 py-1.5 text-sm font-semibold text-fg cursor-grab active:cursor-grabbing transition-colors"
+                                        >
+                                            <Bars3Icon className="h-3.5 w-3.5 text-fg-muted" />
+                                            {nombreParticipante(p)}
+                                            <Badge variant="brand" className="text-[0.65rem]">
+                                                {eloParticipante(p)}
+                                            </Badge>
+                                        </button>
+                                        {poolMenu === p.id && (
+                                            <div className="absolute z-40 top-full left-0 mt-1 w-56 card-elevated max-h-56 overflow-y-auto">
+                                                <div className="px-3 py-2 text-xs font-bold text-fg-muted uppercase tracking-wider border-b border-line">
+                                                    Asignar a grupo
+                                                </div>
+                                                {grupos.length === 0 ? (
+                                                    <p className="px-3 py-2 text-xs text-fg-muted">Añade un grupo primero</p>
+                                                ) : (
+                                                    grupos.map(g => (
+                                                        <button
+                                                            key={g.id}
+                                                            onClick={(e) => { e.stopPropagation(); asignarDesdePool(p.id, g.id) }}
+                                                            className="w-full text-left px-3 py-2 text-sm hover:bg-subtle transition-colors flex justify-between items-center"
+                                                        >
+                                                            <span>Grupo {g.numero_grupo}</span>
+                                                            <Badge variant="neutral">{g.participantes.length}</Badge>
+                                                        </button>
+                                                    ))
+                                                )}
                                             </div>
-                                        ) : (
-                                            <ul className="divide-y divide-gray-100">
-                                                {grupo.participantes?.map((gp, idx) => (
-                                                    <li
-                                                        key={gp.id}
-                                                        draggable
-                                                        onDragStart={() => handleDragStart(grupo.id, gp.id)}
-                                                        onDragOver={(e) => handleDragOver(e, grupo.id, gp.id)}
-                                                        onDrop={(e) => { e.stopPropagation(); handleDrop(grupo.id, gp.id) }}
-                                                        onDragEnd={handleDragEnd}
-                                                        className={`relative p-3 text-sm transition-all cursor-grab active:cursor-grabbing select-none ${
-                                                            dragging?.participanteId === gp.id
-                                                                ? 'opacity-40 bg-blue-50'
-                                                                : dragOver?.grupoId === grupo.id && dragOver?.participanteId === gp.id
-                                                                    ? 'bg-blue-50 border-l-4 border-blue-400'
-                                                                    : 'hover:bg-slate-50'
-                                                        }`}
-                                                    >
-                                                        <div className="flex justify-between items-center">
-                                                            <button
-                                                                onClick={(e) => { e.stopPropagation(); toggleSwapMenu(grupo.id, gp.id) }}
-                                                                className="font-semibold text-gray-800 flex items-center gap-1 hover:text-indigo-700 transition-colors"
-                                                            >
-                                                                <span className="text-slate-300 text-xs mr-1">⠿</span>
-                                                                <span className="text-slate-400 text-xs w-4">{idx + 1}.</span>
-                                                                {nombreParticipante(gp.torneo_participantes)}
-                                                            </button>
-                                                            <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded border border-indigo-100 shrink-0 ml-2">
-                                                            {eloParticipante(gp.torneo_participantes)}
-                                                        </span>
-                                                        </div>
-                                                        <p className="text-xs text-slate-400 mt-0.5 ml-5">
-                                                            {gp.torneo_participantes.miembros.length > 1
-                                                                ? `${gp.torneo_participantes.miembros.length} integrantes`
-                                                                : (gp.torneo_participantes.miembros[0]?.jugadores.clubes?.nombre
-                                                                    ?? gp.torneo_participantes.jugadores?.clubes?.nombre
-                                                                    ?? '—')}
-                                                        </p>
-
-                                                        {/* Menú de sustitución por clic */}
-                                                        {swapMenu?.grupoId === grupo.id && swapMenu?.participanteId === gp.id && (
-                                                            <div className="absolute z-40 top-full left-3 mt-1 w-64 bg-white rounded-lg shadow-xl border border-gray-200 max-h-64 overflow-y-auto">
-                                                                <div className="px-3 py-2 text-xs font-bold text-slate-400 border-b border-gray-100">
-                                                                    Sustituir por
-                                                                </div>
-                                                                {modo === 'manual' && (
-                                                                    <button
-                                                                        onClick={(e) => { e.stopPropagation(); enviarAlPool(grupo.id, gp.id) }}
-                                                                        className="w-full text-left px-3 py-2 text-sm text-amber-600 hover:bg-amber-50 font-semibold transition-colors border-b border-gray-100"
-                                                                    >
-                                                                        ↩ Devolver a la lista
-                                                                    </button>
-                                                                )}
-                                                                {todosLosColocados
-                                                                    .filter(({ p }) => p.id !== gp.id)
-                                                                    .map(({ grupo: g2, p }) => (
-                                                                        <button
-                                                                            key={p.id}
-                                                                            onClick={(e) => { e.stopPropagation(); handleSwapClick(g2.id, p.id) }}
-                                                                            className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 transition-colors flex justify-between items-center"
-                                                                        >
-                                                                            <span>{nombreParticipante(p.torneo_participantes)}</span>
-                                                                            <span className="text-xs text-slate-400">G{g2.numero_grupo}</span>
-                                                                        </button>
-                                                                    ))}
-                                                            </div>
-                                                        )}
-                                                    </li>
-                                                ))}
-                                            </ul>
                                         )}
                                     </div>
                                 ))}
                             </div>
-                        </div>
-                    )}
-                </div>
+                        )}
+                    </div>
+                )}
 
-                {/* Footer */}
-                <div className="px-6 py-4 border-t border-gray-200 flex justify-between items-center shrink-0 bg-gray-50 rounded-b-2xl">
-                    <span className="text-sm text-gray-500">
-                        {grupos.length > 0 && `${grupos.length} grupos · ${grupos.reduce((acc, g) => acc + g.participantes.length, 0)} jugadores`}
-                        {hasChanges && <span className="ml-2 text-amber-500 font-medium">· cambios sin guardar</span>}
-                    </span>
-                    <button onClick={onClose} className="px-6 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700 font-medium transition-colors">
-                        Cerrar
-                    </button>
-                </div>
+                {isLoading ? (
+                    <div className="flex justify-center items-center py-16">
+                        <div className="h-10 w-10 rounded-full border-2 border-line border-t-brand animate-spin" />
+                    </div>
+                ) : grupos.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <TrophyIcon className="h-10 w-10 text-fg-muted opacity-40" />
+                        <h3 className="mt-3 font-semibold text-fg">Aún no hay grupos generados</h3>
+                        <p className="text-sm text-fg-muted mt-1.5 max-w-md">
+                            {modo === 'auto'
+                                ? <>Haz clic en <b>Generar grupos</b> para distribuir jugadores usando el sistema Serpiente basado en ELO.</>
+                                : <>Haz clic en <b>Añadir grupo</b> y arrastra jugadores desde la lista de arriba.</>}
+                        </p>
+                    </div>
+                ) : (
+                    <div ref={gruposRef} className="bg-subtle rounded-xl p-5">
+                        <div className="text-center mb-5">
+                            <h3 className="text-xl font-bold text-fg">{torneo.nombre}</h3>
+                            <p className="text-sm text-fg-muted">Categoría {categoriaActual?.nombre} — Distribución de Grupos</p>
+                            {hasChanges && (
+                                <p className="text-xs text-warning mt-1 inline-flex items-center gap-1.5">
+                                    <ExclamationTriangleIcon className="h-3.5 w-3.5" />
+                                    Arrastra o haz clic para reorganizar · Guarda cuando termines
+                                </p>
+                            )}
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
+                            {grupos.map((grupo) => {
+                                const isDragOver = dragOver?.grupoId === grupo.id
+                                return (
+                                    <div
+                                        key={grupo.id}
+                                        className={`card-flush overflow-hidden transition-shadow ${
+                                            isDragOver ? 'border-brand shadow-lg' : ''
+                                        }`}
+                                        onDragOver={(e) => handleDragOverGroup(e, grupo.id)}
+                                        onDrop={() => handleDrop(grupo.id, -1)}
+                                    >
+                                        <div className="px-3 py-2.5 bg-subtle border-b border-line text-xs font-bold text-fg-muted uppercase tracking-wider flex items-center justify-between">
+                                            <span>
+                                                Grupo {grupo.numero_grupo}
+                                                <span className="ml-2 text-fg-muted">({grupo.participantes.length})</span>
+                                            </span>
+                                            {modo === 'manual' && grupo.participantes.length === 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleEliminarGrupoVacio(grupo.id)}
+                                                    title="Eliminar grupo vacío"
+                                                    className="text-fg-muted hover:text-danger transition-colors"
+                                                >
+                                                    <XMarkIcon className="h-4 w-4" />
+                                                </button>
+                                            )}
+                                        </div>
+                                        {grupo.participantes.length === 0 ? (
+                                            <div className="p-6 text-center text-xs text-fg-muted">
+                                                Arrastra jugadores aquí
+                                            </div>
+                                        ) : (
+                                            <ul className="divide-y divide-line">
+                                                {grupo.participantes?.map((gp, idx) => {
+                                                    const isDraggingThis = dragging?.participanteId === gp.id
+                                                    const isDropTarget = dragOver?.grupoId === grupo.id && dragOver?.participanteId === gp.id
+                                                    return (
+                                                        <li
+                                                            key={gp.id}
+                                                            draggable
+                                                            onDragStart={() => handleDragStart(grupo.id, gp.id)}
+                                                            onDragOver={(e) => handleDragOver(e, grupo.id, gp.id)}
+                                                            onDrop={(e) => { e.stopPropagation(); handleDrop(grupo.id, gp.id) }}
+                                                            onDragEnd={handleDragEnd}
+                                                            className={`relative p-2.5 text-sm transition-all cursor-grab active:cursor-grabbing select-none ${
+                                                                isDraggingThis
+                                                                    ? 'opacity-40 bg-brand-soft'
+                                                                    : isDropTarget
+                                                                        ? 'bg-brand-soft border-l-4 border-brand'
+                                                                        : 'hover:bg-subtle'
+                                                            }`}
+                                                        >
+                                                            <div className="flex justify-between items-center">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => { e.stopPropagation(); toggleSwapMenu(grupo.id, gp.id) }}
+                                                                    className="font-semibold text-fg flex items-center gap-1 hover:text-brand transition-colors min-w-0"
+                                                                >
+                                                                    <Bars3Icon className="h-3.5 w-3.5 text-fg-muted shrink-0" />
+                                                                    <span className="text-fg-muted text-xs w-4">{idx + 1}.</span>
+                                                                    <span className="truncate">{nombreParticipante(gp.torneo_participantes)}</span>
+                                                                </button>
+                                                                <Badge variant="brand" className="shrink-0 ml-2">
+                                                                    {eloParticipante(gp.torneo_participantes)}
+                                                                </Badge>
+                                                            </div>
+                                                            <p className="text-xs text-fg-muted mt-0.5 ml-5">
+                                                                {gp.torneo_participantes.miembros.length > 1
+                                                                    ? `${gp.torneo_participantes.miembros.length} integrantes`
+                                                                    : (gp.torneo_participantes.miembros[0]?.jugadores.clubes?.nombre
+                                                                        ?? gp.torneo_participantes.jugadores?.clubes?.nombre
+                                                                        ?? '—')}
+                                                            </p>
+
+                                                            {/* Menú de sustitución por clic */}
+                                                            {swapMenu?.grupoId === grupo.id && swapMenu?.participanteId === gp.id && (
+                                                                <div className="absolute z-40 top-full left-3 mt-1 w-64 card-elevated max-h-64 overflow-y-auto">
+                                                                    <div className="px-3 py-2 text-xs font-bold text-fg-muted uppercase tracking-wider border-b border-line inline-flex items-center gap-1.5">
+                                                                        <ArrowsRightLeftIcon className="h-3 w-3" />
+                                                                        Sustituir por
+                                                                    </div>
+                                                                    {modo === 'manual' && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => { e.stopPropagation(); enviarAlPool(grupo.id, gp.id) }}
+                                                                            className="w-full text-left px-3 py-2 text-sm text-warning hover:bg-warning-soft font-semibold transition-colors border-b border-line inline-flex items-center gap-1.5"
+                                                                        >
+                                                                            <ArrowDownTrayIcon className="h-3 w-3" />
+                                                                            Devolver a la lista
+                                                                        </button>
+                                                                    )}
+                                                                    {todosLosColocados
+                                                                        .filter(({ p }) => p.id !== gp.id)
+                                                                        .map(({ grupo: g2, p }) => (
+                                                                            <button
+                                                                                key={p.id}
+                                                                                type="button"
+                                                                                onClick={(e) => { e.stopPropagation(); handleSwapClick(g2.id, p.id) }}
+                                                                                className="w-full text-left px-3 py-2 text-sm hover:bg-subtle transition-colors flex justify-between items-center"
+                                                                            >
+                                                                                <span className="truncate">{nombreParticipante(p.torneo_participantes)}</span>
+                                                                                <Badge variant="neutral">G{g2.numero_grupo}</Badge>
+                                                                            </button>
+                                                                        ))}
+                                                                </div>
+                                                            )}
+                                                        </li>
+                                                    )
+                                                })}
+                                            </ul>
+                                        )}
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    </div>
+                )}
             </div>
-        </div>
+
+            <div className="-mx-5 -mb-5 mt-4 px-5 py-3 border-t border-line flex justify-between items-center bg-subtle rounded-b-xl">
+                <span className="text-sm text-fg-muted inline-flex items-center gap-2">
+                    {grupos.length > 0 && (
+                        <>
+                            <CheckIcon className="h-3.5 w-3.5 text-success" />
+                            {grupos.length} grupos · {totalIntegrantes} jugadores
+                        </>
+                    )}
+                    {hasChanges && (
+                        <span className="text-warning font-medium">· cambios sin guardar</span>
+                    )}
+                </span>
+                <Button variant="secondary" onClick={onClose}>
+                    Cerrar
+                </Button>
+            </div>
+        </Modal>
     )
 }

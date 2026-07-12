@@ -4,9 +4,12 @@ import TorneoForm from '@/components/forms/TorneoForm'
 import DataTable from '@/components/ui/DataTable'
 import { PlusIcon } from '@heroicons/react/24/outline'
 import InscripcionTorneoModal from '@/components/ui/InscripcionTorneoModal'
-import GruposTorneoModal from '@/components/ui/GruposTorneoModal' // <-- Importamos el nuevo modal de grupos
+import GruposTorneoModal from '@/components/ui/GruposTorneoModal'
 import PartidosTorneoModal from '@/components/ui/PartidosTorneoModal'
 import LlavesTorneoModal from '@/components/ui/LlavesTorneoModal'
+import { Section } from '@/components/ui/Section'
+import { Button } from '@/components/ui/Button'
+import { Badge } from '@/components/ui/Badge'
 
 type Torneo = {
     id: number
@@ -14,12 +17,24 @@ type Torneo = {
     fecha: string
     ubicacion: string
     modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS'
-    torneo_categorias: { categorias : { id: number; nombre: string } }[]
+    torneo_categorias: { categorias: { id: number; nombre: string } }[]
 }
 
 type PaginatedResponse = {
     torneos: Torneo[]
     total: number
+}
+
+const modalidadLabel: Record<Torneo['modalidad'], string> = {
+    INDIVIDUAL: 'Individual',
+    DOBLES: 'Dobles',
+    EQUIPOS: 'Equipos',
+}
+
+const modalidadVariant: Record<Torneo['modalidad'], 'info' | 'brand' | 'warning'> = {
+    INDIVIDUAL: 'info',
+    DOBLES: 'brand',
+    EQUIPOS: 'warning',
 }
 
 export default function TorneosSection({ className = '' }) {
@@ -31,10 +46,9 @@ export default function TorneosSection({ className = '' }) {
     const [isLoading, setIsLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
-    // Estados para el control de los modales y el torneo seleccionado
     const [selectedTorneo, setSelectedTorneo] = useState<Torneo | null>(null)
     const [showInscripcionModal, setShowInscripcionModal] = useState(false)
-    const [showGruposModal, setShowGruposModal] = useState(false) // <-- Estado para el modal de grupos
+    const [showGruposModal, setShowGruposModal] = useState(false)
     const [showPartidosModal, setShowPartidosModal] = useState(false)
     const [showLlavesModal, setShowLlavesModal] = useState(false)
 
@@ -64,86 +78,117 @@ export default function TorneosSection({ className = '' }) {
     }, [currentPage, itemsPerPage])
 
     const columns = [
-        { header: 'ID', accessor: 'id' },
-        { header: 'Nombre', accessor: 'nombre' },
+        { header: 'ID', accessor: 'id', key: 'id', className: 'w-16 text-fg-muted' },
+        {
+            header: 'Nombre',
+            accessor: 'nombre',
+            render: (n: string) => <span className="font-medium text-fg">{n}</span>,
+        },
         {
             header: 'Fecha',
             accessor: 'fecha',
-            render: (fecha: string) => new Date(fecha).toLocaleDateString()
+            className: 'whitespace-nowrap text-fg-muted',
+            render: (fecha: string) => new Date(fecha).toLocaleDateString(),
         },
-        { header: 'Ubicación', accessor: 'ubicacion' },
+        {
+            header: 'Ubicación',
+            accessor: 'ubicacion',
+            className: 'hidden md:table-cell text-fg-muted',
+        },
         {
             header: 'Modalidad',
             accessor: 'modalidad',
-            render: (modalidad: Torneo['modalidad']) => ({
-                INDIVIDUAL: 'Individual',
-                DOBLES: 'Dobles',
-                EQUIPOS: 'Equipos'
-            }[modalidad] || modalidad)
+            render: (m: Torneo['modalidad']) => (
+                <Badge variant={modalidadVariant[m]}>{modalidadLabel[m]}</Badge>
+            ),
         },
         {
             header: 'Categorías',
             accessor: 'torneo_categorias',
-            render: (torneoCategorias: { categorias?: { nombre?: string } }[]) => (
+            render: (tc: { categorias?: { nombre?: string } }[]) => (
                 <div className="flex flex-wrap gap-1">
-                    {torneoCategorias?.map((tc, idx) => (
-                        <span key={idx} className="bg-gray-100 text-gray-800 text-xs px-2 py-0.5 rounded">
-                            {tc.categorias?.nombre}
-                        </span>
+                    {tc?.map((cat, idx) => (
+                        <Badge key={idx} variant="neutral">
+                            {cat.categorias?.nombre}
+                        </Badge>
                     ))}
                 </div>
-            )
+            ),
         },
-        {  header: 'Acciones',
+        {
+            header: 'Acciones',
             accessor: 'id',
+            key: 'actions',
+            className: 'w-72',
             render: (_: number, row: Torneo) => (
-                <div className="flex space-x-2" onClick={(e) => e.stopPropagation()}>
-                    <button
+                <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
                         onClick={() => {
                             setSelectedTorneo(row)
                             setShowInscripcionModal(true)
                         }}
-                        className="text-xs bg-blue-100 text-blue-700 hover:bg-blue-200 px-3 py-1.5 rounded font-semibold transition-colors"
                     >
                         Inscripciones
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
                         onClick={() => {
                             setSelectedTorneo(row)
                             setShowGruposModal(true)
                         }}
-                        className="text-xs bg-slate-800 text-white hover:bg-slate-700 px-3 py-1.5 rounded font-semibold transition-colors"
                     >
-                        Ver / Generar Grupos
-                    </button>
-                    <button
+                        Grupos
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
                         onClick={() => {
                             setSelectedTorneo(row)
                             setShowPartidosModal(true)
                         }}
-                        className="text-xs bg-indigo-600 text-white hover:bg-indigo-700 px-3 py-1.5 rounded font-semibold transition-colors"
                     >
-                        Ver Partidos
-                    </button>
-                    <button onClick={() => { setSelectedTorneo(row); setShowLlavesModal(true) }} className="text-xs bg-purple-600 text-white hover:bg-purple-700 px-3 py-1.5 rounded font-semibold transition-colors">Llaves</button>
+                        Partidos
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        onClick={() => {
+                            setSelectedTorneo(row)
+                            setShowLlavesModal(true)
+                        }}
+                    >
+                        Llaves
+                    </Button>
                 </div>
-            )
-        }
+            ),
+        },
     ]
 
     return (
-        <div className={`bg-white rounded-lg shadow p-4 ${className}`}>
-            <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-bold">Torneos</h2>
-                <button
-                    onClick={() => setShowForm(true)}
-                    className="bg-blue-600 text-white px-3 py-1 rounded flex items-center"
-                >
-                    <PlusIcon className="h-4 w-4 mr-1" />
-                    Nuevo
-                </button>
-            </div>
-
+        <Section
+            title="Torneos"
+            subtitle="Gestión de torneos y llaves"
+            className={className}
+            actions={
+                showForm ? null : (
+                    <Button
+                        variant="primary"
+                        size="sm"
+                        leadingIcon={<PlusIcon className="h-4 w-4" />}
+                        onClick={() => setShowForm(true)}
+                    >
+                        Nuevo
+                    </Button>
+                )
+            }
+        >
             {showForm ? (
                 <TorneoForm
                     onSuccessAction={() => {
@@ -155,7 +200,7 @@ export default function TorneosSection({ className = '' }) {
             ) : (
                 <>
                     {error && (
-                        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                        <div className="banner banner-warning mb-4">
                             {error}. Si acabas de actualizar el código, aplica la migración de base de datos y reinicia el servidor.
                         </div>
                     )}
@@ -168,11 +213,11 @@ export default function TorneosSection({ className = '' }) {
                         onPageChange={setCurrentPage}
                         onItemsPerPageChange={setItemsPerPage}
                         isLoading={isLoading}
+                        rowKey={(row: Torneo) => row.id}
                     />
                 </>
             )}
 
-            {/* Modal para la gestión de inscripciones de jugadores */}
             <InscripcionTorneoModal
                 isOpen={showInscripcionModal}
                 onClose={() => {
@@ -182,7 +227,6 @@ export default function TorneosSection({ className = '' }) {
                 torneo={selectedTorneo}
             />
 
-            {/* Modal grande para visualizar y disparar el ordenamiento de grupos */}
             <GruposTorneoModal
                 isOpen={showGruposModal}
                 onClose={() => {
@@ -203,9 +247,19 @@ export default function TorneosSection({ className = '' }) {
                     setSelectedTorneo(null)
                 }}
                 torneo={selectedTorneo}
-                onOpenLlaves={() => { setShowPartidosModal(false); setShowLlavesModal(true) }}
+                onOpenLlaves={() => {
+                    setShowPartidosModal(false)
+                    setShowLlavesModal(true)
+                }}
             />
-            <LlavesTorneoModal isOpen={showLlavesModal} onClose={() => { setShowLlavesModal(false); setSelectedTorneo(null) }} torneo={selectedTorneo} />
-        </div>
+            <LlavesTorneoModal
+                isOpen={showLlavesModal}
+                onClose={() => {
+                    setShowLlavesModal(false)
+                    setSelectedTorneo(null)
+                }}
+                torneo={selectedTorneo}
+            />
+        </Section>
     )
 }

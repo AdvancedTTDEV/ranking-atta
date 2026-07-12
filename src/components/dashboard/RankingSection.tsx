@@ -2,6 +2,10 @@
 import { useState, useEffect } from 'react'
 import DataTable from '@/components/ui/DataTable'
 import { ArrowDownTrayIcon } from '@heroicons/react/24/outline'
+import { Section } from '@/components/ui/Section'
+import { Select } from '@/components/ui/Select'
+import { Button } from '@/components/ui/Button'
+import { Badge } from '@/components/ui/Badge'
 
 type Jugador = {
     id: number
@@ -61,7 +65,9 @@ export default function RankingSection({ className = '' }) {
         }
     }
 
-    useEffect(() => { fetchCategorias() }, [])
+    useEffect(() => {
+        fetchCategorias()
+    }, [])
 
     useEffect(() => {
         setCurrentPage(1)
@@ -72,7 +78,7 @@ export default function RankingSection({ className = '' }) {
         fetchJugadores(currentPage, itemsPerPage)
     }, [currentPage, itemsPerPage])
 
-    // ← Escucha el evento de refresh desde GestionAscensoDescenso
+    // Escucha el evento de refresh desde GestionAscensoDescenso
     useEffect(() => {
         const handleRefresh = () => fetchJugadores(currentPage, itemsPerPage)
         window.addEventListener('ranking:refresh', handleRefresh)
@@ -154,57 +160,80 @@ export default function RankingSection({ className = '' }) {
         }
     }
 
+    const rankBadge = (rank: number) => {
+        if (rank === 1) return <Badge variant="warning">🥇 1</Badge>
+        if (rank === 2) return <Badge variant="neutral">🥈 2</Badge>
+        if (rank === 3) return <Badge variant="danger">🥉 3</Badge>
+        return <span className="font-mono text-sm text-fg-muted">#{rank}</span>
+    }
+
     const columns = [
-        { header: 'Ranking', accessor: 'ranking' },
-        { header: 'Nombre', accessor: 'nombre' },
-        { header: 'Puntaje', accessor: 'elo' },
+        {
+            header: '#',
+            accessor: 'ranking',
+            sortable: false,
+            className: 'w-20',
+            render: (rank: number) => rankBadge(rank),
+        },
+        {
+            header: 'Jugador',
+            accessor: 'nombre',
+            render: (nombre: string) => <span className="font-medium text-fg">{nombre}</span>,
+        },
+        {
+            header: 'ELO',
+            accessor: 'elo',
+            sortable: true,
+            className: 'w-24 text-right',
+            render: (elo: number) => (
+                <span className="font-mono text-sm tabular-nums text-fg">{elo}</span>
+            ),
+        },
         {
             header: 'Club',
             accessor: 'clubes',
-            render: (club: { nombre?: string }) => club?.nombre || 'Sin club',
+            render: (club: { nombre?: string }) => club?.nombre ?? <span className="text-fg-muted">—</span>,
         },
         {
             header: 'Categoría',
             accessor: 'categorias',
-            render: (categoria: { nombre?: string }) => categoria?.nombre || 'Sin categoría',
+            render: (categoria: { nombre?: string }) =>
+                categoria?.nombre ? (
+                    <Badge variant="brand">{categoria.nombre}</Badge>
+                ) : (
+                    <span className="text-fg-muted">—</span>
+                ),
         },
     ]
 
     return (
-        <div className={`bg-white rounded-lg shadow p-4 ${className}`}>
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-3">
-                <div>
-                    <h2 className="text-xl font-bold text-slate-800">Ranking de Jugadores</h2>
-                    <p className="text-sm text-slate-500">Gestión de escalafón oficial ATTA</p>
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
-                    <select
+        <Section
+            title="Ranking de Jugadores"
+            subtitle="Escalafón oficial de la ATTA"
+            className={className}
+            actions={
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                    <Select
                         value={selectedCategoriaId}
                         onChange={(e) => setSelectedCategoriaId(e.target.value)}
-                        className="border border-slate-300 rounded-lg px-3 py-2 text-sm w-full md:w-48 focus:ring-2 focus:ring-blue-500 outline-none bg-white text-slate-700"
+                        className="sm:w-48"
                     >
                         <option value="">Todas las categorías</option>
                         {categorias.map((cat) => (
                             <option key={cat.id} value={cat.id}>{cat.nombre}</option>
                         ))}
-                    </select>
-
-                    <button
+                    </Select>
+                    <Button
                         onClick={handleDownloadPDF}
-                        disabled={isLoading}
-                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center transition-colors shadow-sm min-w-[130px]"
+                        isLoading={isLoading}
+                        variant="secondary"
+                        leadingIcon={<ArrowDownTrayIcon className="h-4 w-4" />}
                     >
-                        {isLoading ? (
-                            <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                        ) : (
-                            <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
-                        )}
-                        {isLoading ? 'Generando...' : 'Exportar PDF'}
-                    </button>
+                        Exportar PDF
+                    </Button>
                 </div>
-            </div>
-
+            }
+        >
             <DataTable
                 columns={columns}
                 data={jugadores}
@@ -214,7 +243,8 @@ export default function RankingSection({ className = '' }) {
                 onPageChange={setCurrentPage}
                 onItemsPerPageChange={setItemsPerPage}
                 isLoading={isLoading}
+                rowKey={(row) => row.id}
             />
-        </div>
+        </Section>
     )
 }

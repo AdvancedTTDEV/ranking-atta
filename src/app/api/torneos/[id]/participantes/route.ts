@@ -91,34 +91,71 @@ export async function POST(request: Request, { params }: RouteParams) {
             }
         }
 
-        await prisma.$transaction(async (tx) => {
-            await tx.torneo_participantes.deleteMany({
-                where: { torneo_id: torneoId, categoria_id: categoriaId }
-            })
+        // Limpieza previa: borrar participantes (los miembros se eliminan en
+        // cascada) en una sola operación.
+        await prisma.torneo_participantes.deleteMany({
+            where: { torneo_id: torneoId, categoria_id: categoriaId }
+        })
 
-            for (const inscripcion of inscripciones) {
-                const jugadorIds = inscripcion.jugadoresIds.map(Number)
-                await tx.torneo_participantes.create({
-                    data: {
+        // Si no hay inscripciones nuevas, no abrimos transacción.
+        if (inscripciones.length === 0) {
+            return NextResponse.json({ success: true, message: "Inscripciones actualizadas correctamente" })
+        }
+
+        // Timeout ampliado: la transacción por defecto de Prisma es 5s, que
+        // se queda corto al insertar decenas de inscripciones con sus
+        // miembros. Subimos a 30s para cubrir cómodamente inscripciones
+        // grandes (INDIVIDUAL con muchos jugadores, o EQUIPOS con 5+).
+        await prisma.$transaction(async (tx) => {
+            // 1) Insertar todos los participantes en un solo batch.
+            const participantesCreados = await tx.torneo_participantes.createMany({
+                data: inscripciones.map((inscripcion: { jugadoresIds: (string | number)[]; nombrePersonalizado?: string }) => {
+                    const jugadorIds = inscripcion.jugadoresIds.map(Number)
+                    return {
                         torneo_id: torneoId,
                         categoria_id: categoriaId,
-                        // Se mantiene el primer integrante como representante
-                        // para conservar compatibilidad con el esquema anterior.
+                        // Primer integrante como representante para conservar
+                        // compatibilidad con el esquema anterior.
                         jugador_id: jugadorIds[0],
                         nombre_personalizado: typeof inscripcion.nombrePersonalizado === 'string'
                             ? inscripcion.nombrePersonalizado.trim() || null
                             : null,
-                        seed: 0,
-                        miembros: {
-                            create: jugadorIds.map((jugadorId: number, index: number) => ({
-                                jugador_id: jugadorId,
-                                orden: index + 1
-                            }))
-                        }
+                        seed: 0
                     }
                 })
+            })
+
+            // 2) Recuperar los participantes recién creados (en el orden en
+            // que se insertaron) para conocer los IDs y asociar los miembros.
+            const ids = await tx.torneo_participantes.findMany({
+                where: { torneo_id: torneoId, categoria_id: categoriaId },
+                select: { id: true },
+                orderBy: { id: 'asc' }
+            })
+
+            // 3) Construir el array plano de miembros con el ID del
+            // participante correcto.
+            const miembrosData: { torneo_participante_id: number; jugador_id: number; orden: number }[] = []
+            ids.forEach((participante, index) => {
+                const jugadorIds = inscripciones[index].jugadoresIds.map(Number)
+                jugadorIds.forEach((jugadorId: number, orden: number) => {
+                    miembrosData.push({
+                        torneo_participante_id: participante.id,
+                        jugador_id: jugadorId,
+                        orden: orden + 1
+                    })
+                })
+            })
+
+            // 4) Insertar todos los miembros en un solo batch.
+            if (miembrosData.length > 0) {
+                await tx.torneo_participante_miembros.createMany({
+                    data: miembrosData
+                })
             }
-        })
+
+            return participantesCreados
+        }, { timeout: 30000 })
 
         return NextResponse.json({ success: true, message: "Inscripciones actualizadas correctamente" })
     } catch (error: any) {
