@@ -17,6 +17,7 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
   const [nombre, setNombre] = useState('')
   const [fecha, setFecha] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [ubicacion, setUbicacion] = useState('')
+  const [modalidad, setModalidad] = useState('INDIVIDUAL')
   const [categoriasSeleccionadas, setCategoriasSeleccionadas] = useState<number[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [categorias, setCategorias] = useState<Categoria[]>([]) // ✅ Mover dentro del componente
@@ -53,6 +54,7 @@ const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
       nombre,
       fecha,
       ubicacion,
+      modalidad,
       categorias: categoriasSeleccionadas
     }
     
@@ -93,6 +95,22 @@ const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
           className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
           required
         />
+      </div>
+
+      <div>
+        <label htmlFor="modalidad" className="block text-sm font-medium text-gray-700">
+          Modalidad
+        </label>
+        <select
+          id="modalidad"
+          value={modalidad}
+          onChange={(e) => setModalidad(e.target.value)}
+          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 bg-white"
+        >
+          <option value="INDIVIDUAL">Individual</option>
+          <option value="DOBLES">Dobles</option>
+          <option value="EQUIPOS">Por equipos</option>
+        </select>
       </div>
       
       <div>

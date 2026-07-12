@@ -5,12 +5,15 @@ import DataTable from '@/components/ui/DataTable'
 import { PlusIcon } from '@heroicons/react/24/outline'
 import InscripcionTorneoModal from '@/components/ui/InscripcionTorneoModal'
 import GruposTorneoModal from '@/components/ui/GruposTorneoModal' // <-- Importamos el nuevo modal de grupos
+import PartidosTorneoModal from '@/components/ui/PartidosTorneoModal'
+import LlavesTorneoModal from '@/components/ui/LlavesTorneoModal'
 
 type Torneo = {
     id: number
     nombre: string
     fecha: string
     ubicacion: string
+    modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS'
     torneo_categorias: { categorias : { id: number; nombre: string } }[]
 }
 
@@ -26,21 +29,31 @@ export default function TorneosSection({ className = '' }) {
     const [itemsPerPage, setItemsPerPage] = useState(10)
     const [totalItems, setTotalItems] = useState(0)
     const [isLoading, setIsLoading] = useState(false)
+    const [error, setError] = useState<string | null>(null)
 
     // Estados para el control de los modales y el torneo seleccionado
     const [selectedTorneo, setSelectedTorneo] = useState<Torneo | null>(null)
     const [showInscripcionModal, setShowInscripcionModal] = useState(false)
     const [showGruposModal, setShowGruposModal] = useState(false) // <-- Estado para el modal de grupos
+    const [showPartidosModal, setShowPartidosModal] = useState(false)
+    const [showLlavesModal, setShowLlavesModal] = useState(false)
 
     const fetchTorneos = async (page: number, limit: number) => {
         setIsLoading(true)
+        setError(null)
         try {
             const response = await fetch(`/api/torneos?page=${page}&limit=${limit}`)
             const data: PaginatedResponse = await response.json()
-            setTorneos(data.torneos)
-            setTotalItems(data.total)
+            if (!response.ok) {
+                throw new Error((data as PaginatedResponse & { message?: string }).message || 'No se pudieron cargar los torneos')
+            }
+            setTorneos(Array.isArray(data.torneos) ? data.torneos : [])
+            setTotalItems(typeof data.total === 'number' ? data.total : 0)
         } catch (error) {
             console.error('Error fetching tournaments:', error)
+            setTorneos([])
+            setTotalItems(0)
+            setError(error instanceof Error ? error.message : 'No se pudieron cargar los torneos')
         } finally {
             setIsLoading(false)
         }
@@ -59,6 +72,15 @@ export default function TorneosSection({ className = '' }) {
             render: (fecha: string) => new Date(fecha).toLocaleDateString()
         },
         { header: 'Ubicación', accessor: 'ubicacion' },
+        {
+            header: 'Modalidad',
+            accessor: 'modalidad',
+            render: (modalidad: Torneo['modalidad']) => ({
+                INDIVIDUAL: 'Individual',
+                DOBLES: 'Dobles',
+                EQUIPOS: 'Equipos'
+            }[modalidad] || modalidad)
+        },
         {
             header: 'Categorías',
             accessor: 'torneo_categorias',
@@ -94,6 +116,16 @@ export default function TorneosSection({ className = '' }) {
                     >
                         Ver / Generar Grupos
                     </button>
+                    <button
+                        onClick={() => {
+                            setSelectedTorneo(row)
+                            setShowPartidosModal(true)
+                        }}
+                        className="text-xs bg-indigo-600 text-white hover:bg-indigo-700 px-3 py-1.5 rounded font-semibold transition-colors"
+                    >
+                        Ver Partidos
+                    </button>
+                    <button onClick={() => { setSelectedTorneo(row); setShowLlavesModal(true) }} className="text-xs bg-purple-600 text-white hover:bg-purple-700 px-3 py-1.5 rounded font-semibold transition-colors">Llaves</button>
                 </div>
             )
         }
@@ -121,16 +153,23 @@ export default function TorneosSection({ className = '' }) {
                     onCancelAction={() => setShowForm(false)}
                 />
             ) : (
-                <DataTable
-                    columns={columns}
-                    data={torneos}
-                    currentPage={currentPage}
-                    itemsPerPage={itemsPerPage}
-                    totalItems={totalItems}
-                    onPageChange={setCurrentPage}
-                    onItemsPerPageChange={setItemsPerPage}
-                    isLoading={isLoading}
-                />
+                <>
+                    {error && (
+                        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                            {error}. Si acabas de actualizar el código, aplica la migración de base de datos y reinicia el servidor.
+                        </div>
+                    )}
+                    <DataTable
+                        columns={columns}
+                        data={torneos}
+                        currentPage={currentPage}
+                        itemsPerPage={itemsPerPage}
+                        totalItems={totalItems}
+                        onPageChange={setCurrentPage}
+                        onItemsPerPageChange={setItemsPerPage}
+                        isLoading={isLoading}
+                    />
+                </>
             )}
 
             {/* Modal para la gestión de inscripciones de jugadores */}
@@ -151,7 +190,22 @@ export default function TorneosSection({ className = '' }) {
                     setSelectedTorneo(null)
                 }}
                 torneo={selectedTorneo}
+                onOpenPartidos={() => {
+                    setShowGruposModal(false)
+                    setShowPartidosModal(true)
+                }}
             />
+
+            <PartidosTorneoModal
+                isOpen={showPartidosModal}
+                onClose={() => {
+                    setShowPartidosModal(false)
+                    setSelectedTorneo(null)
+                }}
+                torneo={selectedTorneo}
+                onOpenLlaves={() => { setShowPartidosModal(false); setShowLlavesModal(true) }}
+            />
+            <LlavesTorneoModal isOpen={showLlavesModal} onClose={() => { setShowLlavesModal(false); setSelectedTorneo(null) }} torneo={selectedTorneo} />
         </div>
     )
 }

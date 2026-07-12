@@ -3,8 +3,14 @@ import { useState, useEffect, useRef } from 'react'
 import { toast } from 'react-hot-toast'
 
 interface Club { id: number; nombre: string }
-interface Jugador { nombre: string; elo: number; clubes: Club }
-interface TorneoParticipante { id: number; jugadores: Jugador }
+interface Jugador { id: number; nombre: string; elo: number | null; clubes?: Club }
+interface Miembro { orden: number; jugadores: Jugador }
+interface TorneoParticipante {
+    id: number
+    nombre_personalizado?: string | null
+    jugadores?: Jugador | null
+    miembros: Miembro[]
+}
 interface TorneoGrupoParticipante { id: number; posicion: number; torneo_participantes: TorneoParticipante }
 interface TorneoGrupo { id: number; numero_grupo: number; participantes: TorneoGrupoParticipante[] }
 interface Categoria { id: number; nombre: string }
@@ -15,11 +21,26 @@ interface GruposTorneoModalProps {
     isOpen: boolean
     onClose: () => void
     torneo: Torneo | null
+    onOpenPartidos?: () => void
 }
 
 type Modo = 'auto' | 'manual'
 
-export default function GruposTorneoModal({ isOpen, onClose, torneo }: GruposTorneoModalProps) {
+const nombreParticipante = (participante: TorneoParticipante) =>
+    participante.nombre_personalizado?.trim()
+    || participante.miembros.map(({ jugadores }) => jugadores.nombre).join(' / ')
+    || participante.jugadores?.nombre
+    || 'Participante sin nombre'
+
+const eloParticipante = (participante: TorneoParticipante) => {
+    const integrantes = participante.miembros.length > 0
+        ? participante.miembros.map(({ jugadores }) => jugadores)
+        : participante.jugadores ? [participante.jugadores] : []
+    if (integrantes.length === 0) return 0
+    return Math.round(integrantes.reduce((total, jugador) => total + (jugador.elo ?? 0), 0) / integrantes.length)
+}
+
+export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenPartidos }: GruposTorneoModalProps) {
     const [selectedCategoriaId, setSelectedCategoriaId] = useState<string>('')
     const [grupos, setGrupos] = useState<TorneoGrupo[]>([])
     const [isLoading, setIsLoading] = useState(false)
@@ -444,6 +465,14 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo }: GruposTor
                         )}
                         {grupos.length > 0 && (
                             <button
+                                onClick={onOpenPartidos}
+                                className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg shadow font-semibold transition-colors text-sm"
+                            >
+                                Partidos y hojas
+                            </button>
+                        )}
+                        {grupos.length > 0 && (
+                            <button
                                 onClick={handleDescargar}
                                 disabled={isDownloading}
                                 className="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg shadow font-semibold transition-colors disabled:bg-gray-400 text-sm"
@@ -495,9 +524,9 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo }: GruposTor
                                                 onClick={() => togglePoolMenu(p.id)}
                                                 className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-full pl-3 pr-2 py-1.5 text-sm font-semibold text-slate-700 cursor-grab active:cursor-grabbing transition-colors"
                                             >
-                                                {p.jugadores.nombre}
+                                                {nombreParticipante(p)}
                                                 <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
-                                                    {p.jugadores.elo}
+                                                    {eloParticipante(p)}
                                                 </span>
                                             </button>
                                             {poolMenu === p.id && (
@@ -604,14 +633,18 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo }: GruposTor
                                                             >
                                                                 <span className="text-slate-300 text-xs mr-1">⠿</span>
                                                                 <span className="text-slate-400 text-xs w-4">{idx + 1}.</span>
-                                                                {gp.torneo_participantes.jugadores.nombre}
+                                                                {nombreParticipante(gp.torneo_participantes)}
                                                             </button>
                                                             <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded border border-indigo-100 shrink-0 ml-2">
-                                                            {gp.torneo_participantes.jugadores.elo}
+                                                            {eloParticipante(gp.torneo_participantes)}
                                                         </span>
                                                         </div>
                                                         <p className="text-xs text-slate-400 mt-0.5 ml-5">
-                                                            {gp.torneo_participantes.jugadores.clubes?.nombre ?? '—'}
+                                                            {gp.torneo_participantes.miembros.length > 1
+                                                                ? `${gp.torneo_participantes.miembros.length} integrantes`
+                                                                : (gp.torneo_participantes.miembros[0]?.jugadores.clubes?.nombre
+                                                                    ?? gp.torneo_participantes.jugadores?.clubes?.nombre
+                                                                    ?? '—')}
                                                         </p>
 
                                                         {/* Menú de sustitución por clic */}
@@ -636,7 +669,7 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo }: GruposTor
                                                                             onClick={(e) => { e.stopPropagation(); handleSwapClick(g2.id, p.id) }}
                                                                             className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 transition-colors flex justify-between items-center"
                                                                         >
-                                                                            <span>{p.torneo_participantes.jugadores.nombre}</span>
+                                                                            <span>{nombreParticipante(p.torneo_participantes)}</span>
                                                                             <span className="text-xs text-slate-400">G{g2.numero_grupo}</span>
                                                                         </button>
                                                                     ))}

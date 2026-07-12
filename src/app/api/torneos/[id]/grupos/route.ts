@@ -25,6 +25,10 @@ export async function GET(request: Request, { params }: RouteParams) {
                             include: {
                                 jugadores: {
                                     include: { clubes: true }
+                                },
+                                miembros: {
+                                    orderBy: { orden: 'asc' },
+                                    include: { jugadores: { include: { clubes: true } } }
                                 }
                             }
                         }
@@ -49,13 +53,31 @@ export async function POST(request: Request, { params }: RouteParams) {
 
         const participantes = await prisma.torneo_participantes.findMany({
             where: { torneo_id: torneoId, categoria_id: Number(categoriaId) },
-            include: { jugadores: true },
-            orderBy: { jugadores: { elo: 'desc' } }
+            include: {
+                jugadores: true,
+                miembros: {
+                    orderBy: { orden: 'asc' },
+                    include: { jugadores: true }
+                }
+            }
         })
 
         if (participantes.length === 0) {
             return NextResponse.json({ error: "No hay jugadores inscritos en esta categoría" }, { status: 400 })
         }
+
+        // En dobles y equipos el seed se calcula con el ELO promedio de sus
+        // integrantes; los inscritos antiguos conservan jugador_id como respaldo.
+        participantes.sort((a, b) => {
+            const eloPromedio = (participante: typeof a) => {
+                const integrantes = participante.miembros.length > 0
+                    ? participante.miembros.map(m => m.jugadores)
+                    : participante.jugadores ? [participante.jugadores] : []
+                if (integrantes.length === 0) return 0
+                return integrantes.reduce((total, jugador) => total + (jugador.elo ?? 0), 0) / integrantes.length
+            }
+            return eloPromedio(b) - eloPromedio(a)
+        })
 
         const numGrupos = Math.ceil(participantes.length / tamañoGrupo)
         const gruposTemp: typeof participantes[] = Array.from({ length: numGrupos }, () => [])

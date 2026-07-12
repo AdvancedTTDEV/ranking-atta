@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma'
+import type { torneo_modalidad } from '@prisma/client'
 import { NextResponse } from 'next/server'
 
 export async function GET(request: Request) {
@@ -40,6 +41,12 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const data = await request.json()
+  const modalidadesValidas = ['INDIVIDUAL', 'DOBLES', 'EQUIPOS']
+  const modalidad = (data.modalidad || 'INDIVIDUAL') as torneo_modalidad
+
+  if (!modalidadesValidas.includes(modalidad)) {
+    return NextResponse.json({ message: 'Modalidad de torneo inválida' }, { status: 400 })
+  }
   
   try {
     const nuevoTorneo = await prisma.torneos.create({
@@ -47,6 +54,7 @@ export async function POST(request: Request) {
         nombre: data.nombre,
         fecha: new Date(data.fecha),
         ubicacion: data.ubicacion,
+        modalidad,
         torneo_categorias: {
           create: data.categorias.map((catId: number) => ({
             categoria_id: catId

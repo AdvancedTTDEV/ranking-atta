@@ -83,8 +83,6 @@ export default function PartidosSection() {
     }
 
     const handleUndo = async (id: number) => {
-        if (!confirm("¿Revertir este partido?")) return
-
         try {
             const res = await fetch(`/api/partidos/${id}/revert`, {
                 method: 'POST'
