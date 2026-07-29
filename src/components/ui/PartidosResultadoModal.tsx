@@ -1,10 +1,9 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { ArrowPathIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
-import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 
 interface Categoria { id: number; nombre: string }
@@ -77,10 +76,12 @@ export default function PartidosResultadoModal({
 }: Props) {
     const [seleccionadoId, setSeleccionadoId] = useState<number>(partidoInicialId)
     const [detalleSeleccionado, setDetalleSeleccionado] = useState<DetalleEquipo | null>(null)
-    const [alineacionLocal, setAlineacionLocal] = useState<string[]>([])
-    const [alineacionVisitante, setAlineacionVisitante] = useState<string[]>([])
+    // Las alineaciones de los detalles se configuran en el wizard del
+    // grupo y se guardan en `detalle.jugadores` (source of truth). El
+    // modal de resultado las lee de ahí directamente.
     const [marcadores, setMarcadores] = useState(Array.from({ length: 5 }, () => ({ local: '', visitante: '' })))
     const [guardando, setGuardando] = useState(false)
+    const marcadoresRef = useRef<MarcadoresInputHandle | null>(null)
 
     const seleccionado = useMemo(
         () => partidos.find(p => p.id === seleccionadoId) || null,
@@ -110,8 +111,25 @@ export default function PartidosResultadoModal({
     const hayAnterior = idxActual > 0
     const haySiguiente = idxActual >= 0 && idxActual < partidosMismoGrupo.length - 1
 
+    /**
+     * Partidos pendientes del grupo (no finalizados, sin importar si ya
+     * tienen un borrador en memoria). Se usa para detectar cuándo el
+     * usuario acaba de registrar el último pendiente del grupo y darle
+     * feedback contextual.
+     */
+    const partidosPendientesGrupo = useMemo(
+        () => partidosMismoGrupo.filter(p => p.estado === 'PENDIENTE'),
+        [partidosMismoGrupo]
+    )
+    const seleccionadoEsUltimoPendiente = !!seleccionado
+        && seleccionado.estado === 'PENDIENTE'
+        && partidosPendientesGrupo.length === 1
+        && partidosPendientesGrupo[0].id === seleccionado.id
+
     // Cada vez que se abre un partido, precargamos los marcadores con los
-    // sets ya guardados (si FINALIZADO) o con el borrador en memoria.
+    // sets ya guardados (si FINALIZADO) o con el borrador en memoria. Al
+    // terminar, devolvemos el foco al primer input para que el usuario
+    // pueda seguir capturando con Enter sin tener que volver a clicar.
     useEffect(() => {
         if (!seleccionado) return
         const borrador = borradores[seleccionado.id]
@@ -124,6 +142,14 @@ export default function PartidosResultadoModal({
                     ? { local: String(set.puntos_local), visitante: String(set.puntos_visitante) }
                     : { local: '', visitante: '' }
         }))
+        // Pedimos el foco en el siguiente tick para que React haya aplicado
+        // el `setMarcadores` anterior y los inputs existan con sus refs.
+        const id = window.setTimeout(() => {
+            if (seleccionado.estado !== 'FINALIZADO') {
+                marcadoresRef.current?.focusPrimerInput()
+            }
+        }, 0)
+        return () => window.clearTimeout(id)
     }, [seleccionadoId, seleccionado, borradores])
 
     const irAnterior = () => {
@@ -144,22 +170,11 @@ export default function PartidosResultadoModal({
         }
     }
 
-    const cambiarAlineacion = (lado: 'LOCAL' | 'VISITANTE', indice: number, valor: string) => {
-        const setter = lado === 'LOCAL' ? setAlineacionLocal : setAlineacionVisitante
-        setter(prev => {
-            const next = [...prev]
-            next[indice] = valor
-            return next
-        })
-    }
-
     const abrirDetalle = (detalle: DetalleEquipo) => {
         if (!seleccionado || detalle.estado === 'FINALIZADO') return
         setDetalleSeleccionado(detalle)
-        const locales = detalle.jugadores.filter(jugador => jugador.lado === 'LOCAL').map(jugador => String(jugador.jugador_id))
-        const visitantes = detalle.jugadores.filter(jugador => jugador.lado === 'VISITANTE').map(jugador => String(jugador.jugador_id))
-        setAlineacionLocal(locales)
-        setAlineacionVisitante(visitantes)
+        // Las alineaciones se leen directamente de `detalle.jugadores`
+        // (fuente de verdad: las configuró el wizard del grupo).
         setMarcadores(Array.from({ length: 5 }, (_, index) => {
             const set = detalle.sets[index]
             return set ? { local: String(set.puntos_local), visitante: String(set.puntos_visitante) } : { local: '', visitante: '' }
@@ -171,6 +186,17 @@ export default function PartidosResultadoModal({
         const sets = marcadores
             .filter(set => set.local !== '' || set.visitante !== '')
             .map(set => ({ local: Number(set.local), visitante: Number(set.visitante) }))
+        // Las alineaciones fueron configuradas en el wizard del grupo.
+        // Aquí leemos directamente las IDs de jugadores ya guardadas en
+        // `detalle.jugadores` (source of truth). Si no hay alineación,
+        // enviamos arrays vacíos: el backend rechazará con 400 si el
+        // detalle requiere jugadores.
+        const jugadoresLocalIds = detalleSeleccionado.jugadores
+            .filter(j => j.lado === 'LOCAL')
+            .map(j => j.jugador_id)
+        const jugadoresVisitanteIds = detalleSeleccionado.jugadores
+            .filter(j => j.lado === 'VISITANTE')
+            .map(j => j.jugador_id)
         setGuardando(true)
         try {
             const response = await fetch(
@@ -179,8 +205,8 @@ export default function PartidosResultadoModal({
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        jugadoresLocalIds: alineacionLocal.map(Number),
-                        jugadoresVisitanteIds: alineacionVisitante.map(Number),
+                        jugadoresLocalIds,
+                        jugadoresVisitanteIds,
                         sets,
                     })
                 }
@@ -199,6 +225,13 @@ export default function PartidosResultadoModal({
 
     const guardarResultado = () => {
         if (!seleccionado) return
+        if (seleccionado.estado === 'FINALIZADO') {
+            // No se puede añadir un borrador sobre un partido ya cerrado.
+            // La vista ya deshabilita los inputs, pero cubrimos el atajo
+            // de Enter por si el foco quedó en un botón.
+            toast.error('Este partido ya fue guardado. Revertirlo será parte del siguiente paso.')
+            return
+        }
         const sets = marcadores
             .filter(set => set.local !== '' || set.visitante !== '')
             .map(set => ({ local: Number(set.local), visitante: Number(set.visitante) }))
@@ -206,11 +239,31 @@ export default function PartidosResultadoModal({
             toast.error('Ingresa al menos un set antes de pasar al borrador')
             return
         }
+        // Calculamos el total de borradores DESPUÉS de añadir este, para
+        // mostrar el contador correcto en el mensaje final del grupo.
+        const totalBorradores = Object.keys(borradores).length + 1
         onBorradoresChange({ ...borradores, [seleccionado.id]: { sets } })
-        toast.success('Resultado añadido al borrador')
-        // Tras añadir al borrador, saltamos al siguiente partido pendiente
-        // del grupo (que es lo que el usuario estaba haciendo en masa).
-        if (haySiguiente) irSiguiente()
+        if (seleccionadoEsUltimoPendiente) {
+            // El usuario acaba de registrar el último partido pendiente
+            // del grupo. Le avisamos con un mensaje positivo en vez del
+            // genérico "Resultado añadido al borrador", y NO avanzamos
+            // (no hay siguiente) ni cerramos: lo dejamos en el modal
+            // para que revise, edite o cierre cuando quiera.
+            toast.success(
+                `¡Grupo completo! ${totalBorradores} borrador${totalBorradores === 1 ? '' : 'es'} listo${totalBorradores === 1 ? '' : 's'} para enviar`,
+                { duration: 4000 }
+            )
+        } else if (haySiguiente) {
+            toast.success('Resultado añadido al borrador')
+            irSiguiente()
+        } else {
+            // No es el último pendiente (puede que el siguiente ya esté
+            // finalizado), pero tampoco hay un "siguiente" navegable
+            // (ej. cuando filtras por pendientes manualmente). En este
+            // caso también cerramos para no dejar al usuario atascado.
+            toast.success('Resultado añadido al borrador')
+            cerrar()
+        }
     }
 
     const deshacerResultado = async () => {
@@ -230,9 +283,12 @@ export default function PartidosResultadoModal({
     }
 
     const cerrar = () => {
-        if (Object.keys(borradores).length > 0) {
-            const cantidad = Object.keys(borradores).length
-            toast(`Tienes ${cantidad} borrador${cantidad === 1 ? '' : 'es'} sin enviar`, { icon: '📝' })
+        const cantidad = Object.keys(borradores).length
+        if (cantidad > 0) {
+            toast.success(
+                `${cantidad} borrador${cantidad === 1 ? '' : 'es'} pendiente${cantidad === 1 ? '' : 's'}. Pulsa "Guardar cambios" en la vista principal para enviar.`,
+                { duration: 4000 }
+            )
         }
         onClose()
     }
@@ -288,12 +344,19 @@ export default function PartidosResultadoModal({
 
     // ── Modal para EQUIPOS: detalle de un partido individual ──
     if (torneo.modalidad === 'EQUIPOS' && detalleSeleccionado) {
+        // Las alineaciones se configuran una sola vez por GRUPO en el
+        // wizard y se guardan en `detalle.jugadores`. Aquí las mostramos
+        // como read-only tag list (sin dropdowns). Si la alineación no
+        // está guardada, mostramos un banner informativo.
+        const jugadoresLocalDetalle = detalleSeleccionado.jugadores.filter(j => j.lado === 'LOCAL')
+        const jugadoresVisitDetalle = detalleSeleccionado.jugadores.filter(j => j.lado === 'VISITANTE')
+        const hayAlineacion = jugadoresLocalDetalle.length > 0 && jugadoresVisitDetalle.length > 0
         return (
             <Modal
                 isOpen
                 onClose={() => setDetalleSeleccionado(null)}
                 title={`${detalleSeleccionado.orden}. ${detalleSeleccionado.tipo === 'DOBLES' ? 'Dobles' : 'Individual'}`}
-                description="Selecciona las alineaciones y registra los sets al mejor de 5"
+                description="Alineación preasignada por el wizard del grupo · registra los sets al mejor de 5"
                 size="lg"
                 footer={
                     <>
@@ -306,34 +369,43 @@ export default function PartidosResultadoModal({
                     </>
                 }
             >
+                {!hayAlineacion && (
+                    <div className="banner banner-warning mb-4 inline-flex items-center gap-1.5 text-xs">
+                        <ExclamationTriangleIcon className="h-4 w-4" />
+                        <span>
+                            Este detalle no tiene alineación guardada. Cierra, abre el
+                            <b> wizard de alineación del grupo</b> y vuelve a entrar.
+                        </span>
+                    </div>
+                )}
                 <div className="grid grid-cols-2 gap-4 mb-5">
                     {(['LOCAL', 'VISITANTE'] as const).map(lado => {
                         const integrantes = lado === 'LOCAL'
-                            ? seleccionado.participante_local.miembros
-                            : seleccionado.participante_visitante.miembros
-                        const alineacion = lado === 'LOCAL' ? alineacionLocal : alineacionVisitante
-                        const cantidad = detalleSeleccionado.tipo === 'DOBLES' ? 2 : 1
+                            ? jugadoresLocalDetalle
+                            : jugadoresVisitDetalle
                         const titulo = lado === 'LOCAL'
                             ? nombreParticipante(seleccionado.participante_local)
                             : nombreParticipante(seleccionado.participante_visitante)
                         return (
                             <div key={lado}>
                                 <p className="text-sm font-semibold mb-2">{titulo}</p>
-                                {Array.from({ length: cantidad }, (_, indice) => (
-                                    <Select
-                                        key={indice}
-                                        value={alineacion[indice] || ''}
-                                        onChange={e => cambiarAlineacion(lado, indice, e.target.value)}
-                                        className="mb-2"
-                                    >
-                                        <option value="">Selecciona jugador</option>
-                                        {integrantes.map(miembro => (
-                                            <option key={miembro.jugador_id} value={miembro.jugador_id}>
-                                                {miembro.jugadores.nombre}
-                                            </option>
+                                {integrantes.length === 0 ? (
+                                    <div className="text-xs text-fg-muted italic">
+                                        Sin jugadores asignados
+                                    </div>
+                                ) : (
+                                    <div className="space-y-1.5">
+                                        {integrantes.map((j, idx) => (
+                                            <div
+                                                key={`${j.jugador_id}-${idx}`}
+                                                className="flex items-center gap-1.5 px-2 py-1 bg-brand-soft border border-brand rounded text-sm"
+                                            >
+                                                <span className="font-mono text-brand text-xs">{j.jugadores.id}</span>
+                                                <span className="text-fg font-medium flex-1 truncate">{j.jugadores.nombre}</span>
+                                            </div>
                                         ))}
-                                    </Select>
-                                ))}
+                                    </div>
+                                )}
                             </div>
                         )
                     })}
@@ -341,6 +413,13 @@ export default function PartidosResultadoModal({
                 <MarcadoresInput marcadores={marcadores} setMarcadores={setMarcadores} />
             </Modal>
         )
+    }
+
+    const manejarEnter = () => {
+        guardarResultado()
+        if (seleccionadoEsUltimoPendiente) {
+            window.setTimeout(() => cerrar(), 0)
+        }
     }
 
     // ── Modal INDIVIDUAL / DOBLES: registrar resultado con navegación ──
@@ -374,8 +453,30 @@ export default function PartidosResultadoModal({
                         </Button>
                     )}
                     {seleccionado.estado !== 'FINALIZADO' && (
-                        <Button variant="primary" onClick={guardarResultado}>
-                            {haySiguiente ? 'Guardar y siguiente' : 'Guardar resultado'}
+                        <Button
+                            variant="primary"
+                            onClick={() => {
+                                guardarResultado()
+                                // Si era el último pendiente, ya añadimos al
+                                // borrador dentro de `guardarResultado` (que
+                                // no cerró el modal por sí mismo). Cerramos
+                                // aquí para que el botón "Cerrar grupo"
+                                // cumpla su palabra.
+                                if (seleccionadoEsUltimoPendiente) {
+                                    // Usamos `setTimeout(0)` para que el
+                                    // `setBorradores` se haya aplicado al
+                                    // toast de cierre (que lee del state
+                                    // capturado en este closure).
+                                    window.setTimeout(() => cerrar(), 0)
+                                }
+                            }}
+                        >
+                            {seleccionadoEsUltimoPendiente
+                                ? 'Cerrar grupo'
+                                : haySiguiente ? 'Guardar y siguiente' : 'Guardar resultado'}
+                            <kbd className="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-[0.65rem] font-mono font-bold rounded bg-brand-soft text-brand border border-brand/40">
+                                ↵
+                            </kbd>
                         </Button>
                     )}
                     {seleccionado.estado === 'FINALIZADO' && (
@@ -392,39 +493,183 @@ export default function PartidosResultadoModal({
             {tieneBorrador && seleccionado.estado !== 'FINALIZADO' && (
                 <div className="banner banner-warning mb-3 inline-flex items-center gap-1.5 text-xs">
                     <ExclamationTriangleIcon className="h-4 w-4" />
-                    Hay un borrador sin enviar para este partido.
+                    {seleccionadoEsUltimoPendiente
+                        ? 'Último partido del grupo listo. Cierra y pulsa "Guardar cambios" en la vista principal para enviar.'
+                        : 'Borrador sin enviar para este partido.'}
                 </div>
             )}
             <MarcadoresInput
+                ref={marcadoresRef}
                 marcadores={marcadores}
                 setMarcadores={setMarcadores}
                 disabled={seleccionado.estado === 'FINALIZADO'}
+                onEnter={manejarEnter}
             />
             <p className="text-xs text-fg-muted mt-4">
                 Ingresa solo los sets jugados. El ganador debe llegar a 3 sets.
+            </p>
+            <p className="text-xs text-fg-muted mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="inline-flex items-center gap-1">
+                    <kbd className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-[0.65rem] font-mono font-bold rounded bg-surface text-fg border border-line">
+                        ↑
+                    </kbd>
+                    <kbd className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-[0.65rem] font-mono font-bold rounded bg-surface text-fg border border-line">
+                        ↓
+                    </kbd>
+                    <kbd className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-[0.65rem] font-mono font-bold rounded bg-surface text-fg border border-line">
+                        ←
+                    </kbd>
+                    <kbd className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-[0.65rem] font-mono font-bold rounded bg-surface text-fg border border-line">
+                        →
+                    </kbd>
+                    navegar
+                </span>
+                <span className="inline-flex items-center gap-1">
+                    <kbd className="inline-flex items-center justify-center h-5 px-1.5 text-[0.65rem] font-mono font-bold rounded bg-surface text-fg border border-line">
+                        Enter
+                    </kbd>
+                    guardar y siguiente
+                </span>
+                <span className="inline-flex items-center gap-1">
+                    <kbd className="inline-flex items-center justify-center h-5 px-1.5 text-[0.65rem] font-mono font-bold rounded bg-surface text-fg border border-line">
+                        Esc
+                    </kbd>
+                    cerrar
+                </span>
             </p>
         </Modal>
     )
 }
 
-function MarcadoresInput({
-    marcadores,
-    setMarcadores,
-    disabled = false,
-}: {
+interface MarcadoresInputProps {
     marcadores: { local: string; visitante: string }[]
     setMarcadores: React.Dispatch<React.SetStateAction<{ local: string; visitante: string }[]>>
     disabled?: boolean
-}) {
+    /** Acción al pulsar Enter en un input. Si no se provee, Enter no hace nada. */
+    onEnter?: () => void
+}
+interface MarcadoresInputHandle {
+    /** Pone el foco en el input del set 1, local, y selecciona su contenido. */
+    focusPrimerInput: () => void
+}
+
+const MarcadoresInput = forwardRef<MarcadoresInputHandle, MarcadoresInputProps>(function MarcadoresInput({
+    marcadores,
+    setMarcadores,
+    disabled = false,
+    onEnter,
+}, ref) {
+    // Refs a los inputs para mover el foco por teclado sin re-renderizar.
+    // La clave es `${lado}-${index}`.
+    const refs = useRef<Record<string, HTMLInputElement | null>>({})
+    const containerRef = useRef<HTMLDivElement | null>(null)
+
+    useImperativeHandle(ref, () => ({
+        focusPrimerInput: () => {
+            const primerInput = refs.current['local-0']
+            primerInput?.focus()
+            primerInput?.select()
+        },
+    }), [])
+
+    /**
+     * Devuelve la celda adyacente en la dirección indicada, o `null` si no
+     * hay vecino (estamos en un extremo). La rejilla es 5 filas × 2 columnas
+     * (local | visitante).
+     */
+    const vecino = (lado: 'local' | 'visitante', index: number, dir: 'arriba' | 'abajo' | 'izquierda' | 'derecha') => {
+        if (dir === 'arriba' && index > 0) return { lado, index: index - 1 }
+        if (dir === 'abajo' && index < marcadores.length - 1) return { lado, index: index + 1 }
+        if (dir === 'izquierda' && lado === 'visitante') return { lado: 'local', index }
+        if (dir === 'derecha' && lado === 'local') return { lado: 'visitante', index }
+        return null
+    }
+
+    /**
+     * Devuelve `true` si el cursor está en el extremo desde el que tendría
+     * sentido "salir" del input actual. Para la flecha izquierda y arriba,
+     * el cursor debe estar al inicio (selectionStart === 0). Para la flecha
+     * derecha y abajo, al final (selectionStart === value.length).
+     */
+    const enExtremo = (e: React.KeyboardEvent<HTMLInputElement>, dir: 'arriba' | 'abajo' | 'izquierda' | 'derecha') => {
+        const target = e.currentTarget
+        const { selectionStart, selectionEnd, value } = target
+        if (selectionStart === null || selectionEnd === null) return true
+        if (dir === 'arriba' || dir === 'izquierda') {
+            return selectionStart === 0 && selectionEnd === 0
+        }
+        return selectionStart === value.length && selectionEnd === value.length
+    }
+
+    const manejarTecla = (e: React.KeyboardEvent<HTMLInputElement>, lado: 'local' | 'visitante', index: number) => {
+        // Permitimos que el navegador haga su trabajo si hay una selección o
+        // el cursor no está en el extremo. Solo "robamos" la flecha cuando
+        // movernos dentro del input no tendría sentido.
+        if (e.key === 'ArrowUp') {
+            e.preventDefault()
+            if (enExtremo(e, 'arriba')) {
+                const dest = vecino(lado, index, 'arriba')
+                if (dest) refs.current[`${dest.lado}-${dest.index}`]?.focus()
+            } else {
+                // Mover cursor al inicio del input.
+                const target = e.currentTarget
+                target.setSelectionRange(0, 0)
+            }
+            return
+        }
+        if (e.key === 'ArrowDown') {
+            e.preventDefault()
+            if (enExtremo(e, 'abajo')) {
+                const dest = vecino(lado, index, 'abajo')
+                if (dest) refs.current[`${dest.lado}-${dest.index}`]?.focus()
+            } else {
+                const target = e.currentTarget
+                const len = target.value.length
+                target.setSelectionRange(len, len)
+            }
+            return
+        }
+        if (e.key === 'ArrowLeft') {
+            if (enExtremo(e, 'izquierda')) {
+                const dest = vecino(lado, index, 'izquierda')
+                if (dest) {
+                    e.preventDefault()
+                    refs.current[`${dest.lado}-${dest.index}`]?.focus()
+                }
+            }
+            return
+        }
+        if (e.key === 'ArrowRight') {
+            if (enExtremo(e, 'derecha')) {
+                const dest = vecino(lado, index, 'derecha')
+                if (dest) {
+                    e.preventDefault()
+                    refs.current[`${dest.lado}-${dest.index}`]?.focus()
+                }
+            }
+            return
+        }
+        if (e.key === 'Enter') {
+            if (onEnter) {
+                e.preventDefault()
+                onEnter()
+            }
+        }
+    }
+
     return (
-        <div className="space-y-2">
+        <div className="space-y-2" ref={containerRef}>
             {marcadores.map((marcador, index) => (
                 <div key={index} className="grid grid-cols-[1fr_64px_auto_64px_1fr] items-center gap-2">
                     <span className="text-right text-sm text-fg-muted">{index + 1}. set</span>
                     <input
+                        ref={el => { refs.current[`local-${index}`] = el }}
                         inputMode="numeric"
                         disabled={disabled}
                         value={marcador.local}
+                        data-set-idx={index}
+                        data-lado="local"
+                        onKeyDown={e => manejarTecla(e, 'local', index)}
                         onChange={e => setMarcadores(prev => prev.map((item, itemIndex) =>
                             itemIndex === index ? { ...item, local: e.target.value.replace(/\D/g, '') } : item
                         ))}
@@ -432,9 +677,13 @@ function MarcadoresInput({
                     />
                     <span className="text-center text-fg-muted font-bold">:</span>
                     <input
+                        ref={el => { refs.current[`visitante-${index}`] = el }}
                         inputMode="numeric"
                         disabled={disabled}
                         value={marcador.visitante}
+                        data-set-idx={index}
+                        data-lado="visitante"
+                        onKeyDown={e => manejarTecla(e, 'visitante', index)}
                         onChange={e => setMarcadores(prev => prev.map((item, itemIndex) =>
                             itemIndex === index ? { ...item, visitante: e.target.value.replace(/\D/g, '') } : item
                         ))}
@@ -445,4 +694,4 @@ function MarcadoresInput({
             ))}
         </div>
     )
-}
+})

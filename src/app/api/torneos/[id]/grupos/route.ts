@@ -151,10 +151,14 @@ export async function POST(request: Request, { params }: RouteParams) {
 
                 if (gruposTemp[i].length > 0) {
                     await tx.torneo_grupo_participantes.createMany({
-                        data: gruposTemp[i].map((p, pIndex) => ({
+                        data: gruposTemp[i].map(p => ({
                             grupo_id: nuevoGrupo.id,
-                            torneo_participante_id: p.id,
-                            posicion: pIndex + 1
+                            torneo_participante_id: p.id
+                            // `posicion` queda null: solo se setea cuando el
+                            // operador resuelve un empate (PUT /posiciones).
+                            // Esto evita que el sembrado inicial de los
+                            // grupos contamine el cálculo de "desempate
+                            // manual" en la clasificación.
                         }))
                     })
                 }

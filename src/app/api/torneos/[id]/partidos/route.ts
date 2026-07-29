@@ -1,109 +1,9 @@
 import prisma from '@/lib/prisma'
 import { NextResponse } from 'next/server'
+import { crucesRoundRobin } from '@/lib/seed'
+import { OFFSET_MANUAL, calcularEstadisticas, compararRatio, calcularClasificacionGrupo, PosicionManual, PartidoParaTabla } from '@/lib/empates'
 
 interface RouteParams { params: Promise<{ id: string }> }
-
-type ResultadoGrupo = {
-    participanteId: number
-    victorias: number
-    derrotas: number
-    setsFavor: number
-    setsContra: number
-    puntosFavor: number
-    puntosContra: number
-}
-
-type PartidoParaTabla = {
-    participante_local_id: number | null
-    participante_visitante_id: number | null
-    ganador_participante_id: number | null
-    sets_local: number
-    sets_visitante: number
-    estado: string
-    sets: { puntos_local: number; puntos_visitante: number }[]
-}
-
-const crearEstadisticas = (ids: number[]): Map<number, ResultadoGrupo> => new Map(ids.map(participanteId => [participanteId, {
-    participanteId, victorias: 0, derrotas: 0, setsFavor: 0, setsContra: 0, puntosFavor: 0, puntosContra: 0
-}]))
-
-const calcularEstadisticas = (ids: number[], partidos: PartidoParaTabla[]) => {
-    const resultado = crearEstadisticas(ids)
-    for (const partido of partidos) {
-        if (partido.estado !== 'FINALIZADO' || !partido.ganador_participante_id) continue
-        if (!partido.participante_local_id || !partido.participante_visitante_id) continue
-        const local = resultado.get(partido.participante_local_id)
-        const visitante = resultado.get(partido.participante_visitante_id)
-        if (!local || !visitante) continue
-        const ganaLocal = partido.ganador_participante_id === partido.participante_local_id
-        local.victorias += ganaLocal ? 1 : 0
-        local.derrotas += ganaLocal ? 0 : 1
-        visitante.victorias += ganaLocal ? 0 : 1
-        visitante.derrotas += ganaLocal ? 1 : 0
-        local.setsFavor += partido.sets_local
-        local.setsContra += partido.sets_visitante
-        visitante.setsFavor += partido.sets_visitante
-        visitante.setsContra += partido.sets_local
-        for (const set of partido.sets) {
-            local.puntosFavor += set.puntos_local
-            local.puntosContra += set.puntos_visitante
-            visitante.puntosFavor += set.puntos_visitante
-            visitante.puntosContra += set.puntos_local
-        }
-    }
-    return resultado
-}
-
-const compararRatio = (favorA: number, contraA: number, favorB: number, contraB: number) => {
-    // Sin derrotas el ratio se considera superior; la multiplicación evita
-    // errores de precisión de divisiones decimales.
-    if (contraA === 0 && contraB !== 0) return -1
-    if (contraB === 0 && contraA !== 0) return 1
-    if (contraA === 0 && contraB === 0) return 0
-    return (favorB * contraA) - (favorA * contraB)
-}
-
-const ordenarEmpate = (ids: number[], partidos: PartidoParaTabla[]): { ids: number[]; pendiente: number[] } => {
-    if (ids.length < 2) return { ids, pendiente: [] }
-    const estadisticas = calcularEstadisticas(ids, partidos.filter(partido => partido.participante_local_id !== null && partido.participante_visitante_id !== null && ids.includes(partido.participante_local_id) && ids.includes(partido.participante_visitante_id)))
-    const ordenados = [...ids].sort((a, b) => {
-        const primero = estadisticas.get(a)!
-        const segundo = estadisticas.get(b)!
-        const porSets = compararRatio(primero.setsFavor, primero.setsContra, segundo.setsFavor, segundo.setsContra)
-        return porSets || compararRatio(primero.puntosFavor, primero.puntosContra, segundo.puntosFavor, segundo.puntosContra)
-    })
-    const bloques: number[][] = []
-    for (const id of ordenados) {
-        const actual = estadisticas.get(id)!
-        const ultimo = bloques[bloques.length - 1]
-        if (!ultimo) { bloques.push([id]); continue }
-        const previo = estadisticas.get(ultimo[0])!
-        const iguales = compararRatio(actual.setsFavor, actual.setsContra, previo.setsFavor, previo.setsContra) === 0
-            && compararRatio(actual.puntosFavor, actual.puntosContra, previo.puntosFavor, previo.puntosContra) === 0
-        if (iguales) ultimo.push(id)
-        else bloques.push([id])
-    }
-    const resueltos: number[] = []
-    const pendiente: number[] = []
-    for (const bloque of bloques) {
-        if (bloque.length === 1) resueltos.push(...bloque)
-        else if (bloques.length > 1) {
-            // Al definirse una posición se excluye de la igualdad restante y
-            // se vuelve a calcular solo con los involucrados, tal como exige
-            // el desempate de triple empate.
-            const siguiente = ordenarEmpate(bloque, partidos)
-            resueltos.push(...siguiente.ids)
-            pendiente.push(...siguiente.pendiente)
-        }
-        else {
-            // Si sigue igual después de usar únicamente el mini-grupo, requiere
-            // una decisión explícita del responsable; no se ordena al azar.
-            resueltos.push(...bloque)
-            pendiente.push(...bloque)
-        }
-    }
-    return { ids: resueltos, pendiente }
-}
 
 const participantesInclude = {
     miembros: {
@@ -167,13 +67,33 @@ export async function GET(request: Request, { params }: RouteParams) {
                     }
                 }
         })
-        const grupos = new Map<number, { numero: number; ids: Set<number>; nombres: Map<number, string>; partidos: typeof partidos; categoria_id: number }>()
+        const grupos = new Map<number, { numero: number; ids: Set<number>; nombres: Map<number, string>; partidos: typeof partidos; categoria_id: number; posicionesManual: Map<number, number> }>()
+        // Leemos las posiciones manuales que el operador haya asignado
+        // previamente (PUT /torneos/[id]/grupos/[grupoId]/posiciones).
+        // Se consultan todas en una sola query para no hacer N+1.
+        const grupoIds = [...new Set(
+            partidos.map(p => p.torneo_grupos?.id).filter((id): id is number => typeof id === 'number')
+        )]
+        const grupoParticipantes = grupoIds.length > 0
+            ? await prisma.torneo_grupo_participantes.findMany({
+                where: { grupo_id: { in: grupoIds } },
+                select: { grupo_id: true, torneo_participante_id: true, posicion: true }
+            })
+            : []
+        const manualPorGrupo = new Map<number, Map<number, number>>()
+        for (const item of grupoParticipantes) {
+            if (item.posicion == null) continue
+            const map = manualPorGrupo.get(item.grupo_id) || new Map<number, number>()
+            map.set(item.torneo_participante_id, item.posicion)
+            manualPorGrupo.set(item.grupo_id, map)
+        }
         for (const partido of partidos) {
             if (!partido.torneo_grupos) continue
             const grupo = grupos.get(partido.torneo_grupos.id) || {
                 numero: partido.torneo_grupos.numero_grupo,
                 ids: new Set<number>(), nombres: new Map<number, string>(), partidos: [] as typeof partidos,
-                categoria_id: partido.categoria_id
+                categoria_id: partido.categoria_id,
+                posicionesManual: manualPorGrupo.get(partido.torneo_grupos.id) || new Map<number, number>()
             }
             if (!partido.participante_local || !partido.participante_visitante || !partido.participante_local_id || !partido.participante_visitante_id) continue
             const nombre = (participante: NonNullable<typeof partido.participante_local>) => participante.nombre_personalizado
@@ -197,30 +117,57 @@ export async function GET(request: Request, { params }: RouteParams) {
                 ? grupo.partidos.map(partido => ({ ...partido, sets: [] as { puntos_local: number; puntos_visitante: number }[] }))
                 : grupo.partidos as unknown as never[]
             const globales = calcularEstadisticas(ids, partidosParaCalculo as never)
-            const bloquesVictorias = new Map<number, number[]>()
-            ids.forEach(participanteId => {
-                const victorias = globales.get(participanteId)!.victorias
-                bloquesVictorias.set(victorias, [...(bloquesVictorias.get(victorias) || []), participanteId])
-            })
-            const orden: number[] = []
-            const pendientes = new Set<number>()
-            ;[...bloquesVictorias.keys()].sort((a, b) => b - a).forEach(victorias => {
-                const desempate = ordenarEmpate(bloquesVictorias.get(victorias)!, partidosParaCalculo as never)
-                orden.push(...desempate.ids)
-                desempate.pendiente.forEach(id => pendientes.add(id))
+            const { orden, pendientes: pendientesIds } = calcularClasificacionGrupo(
+                ids, partidosParaCalculo as never, grupo.posicionesManual
+            )
+            const pendientes = new Set<number>(pendientesIds)
+
+            // Calculamos la "posición real" del ranking. Para los participantes
+            // que el sistema no puede desempatar, todos comparten la posición
+            // del primero del bloque (en vez de inventar 2°, 3°, 4°). El
+            // siguiente no-empatado salta al puesto siguiente al bloque.
+            // Mantenemos `posicion: index + 1` como ordinal estable para
+            // consumidores que iteran la lista, y exponemos `posicion_empatada`
+            // como la "posición real" (que puede repetirse en empates).
+            //
+            // Para los pendientes, la posición compartida es la del primero
+            // del bloque. Como `orden` ya está ordenado por estadísticas
+            // (V → ratio de sets → ratio de puntos), un bloque de empate es
+            // una secuencia contigua de IDs con las mismas stats. Retrocedo
+            // mientras el anterior tenga las mismas stats Y sea pendiente.
+            const posiciones = orden.map((participanteId, index) => {
+                const esPendiente = pendientes.has(participanteId)
+                let posicionEmpatada: number
+                if (!esPendiente) {
+                    posicionEmpatada = index + 1
+                } else {
+                    const statsActuales = globales.get(participanteId)!
+                    let i = index
+                    while (i > 0 && pendientes.has(orden[i - 1])) {
+                        const statsAnterior = globales.get(orden[i - 1])!
+                        // Mismo bloque solo si tienen idénticas stats
+                        const mismoRatioSets = compararRatio(statsActuales.setsFavor, statsActuales.setsContra, statsAnterior.setsFavor, statsAnterior.setsContra) === 0
+                        const mismoRatioPuntos = compararRatio(statsActuales.puntosFavor, statsActuales.puntosContra, statsAnterior.puntosFavor, statsAnterior.puntosContra) === 0
+                        if (!mismoRatioSets || !mismoRatioPuntos) break
+                        i--
+                    }
+                    posicionEmpatada = i + 1
+                }
+                return {
+                    posicion: index + 1,
+                    posicion_empatada: posicionEmpatada,
+                    participante_id: participanteId,
+                    nombre: grupo.nombres.get(participanteId),
+                    ...globales.get(participanteId),
+                    requiere_decision_manual: esPendiente
+                }
             })
             return {
                 grupoId,
                 categoria_id: grupo.categoria_id,
                 numero_grupo: grupo.numero,
                 pendientes_manual: [...pendientes],
-                posiciones: orden.map((participanteId, index) => ({
-                    posicion: index + 1,
-                    participante_id: participanteId,
-                    nombre: grupo.nombres.get(participanteId),
-                    ...globales.get(participanteId),
-                    requiere_decision_manual: pendientes.has(participanteId)
-                }))
+                posiciones
             }
         })
         return NextResponse.json({ partidos, clasificaciones })
@@ -259,32 +206,33 @@ export async function POST(request: Request, { params }: RouteParams) {
             return NextResponse.json({ error: 'Cada grupo necesita al menos dos participantes' }, { status: 400 })
         }
 
-        // Calculamos el universo completo de cruces (todos vs todos) en cliente
-        // y en servidor, de manera que la modal de previsualización pueda
-        // mostrar todos los checkboxes sin re-pedir al servidor, y que el POST
-        // reciba un subconjunto para crear solamente los seleccionados.
+        // Calculamos el universo completo de cruces en servidor con
+        // round-robin para que la siembra no repita jugadores en cruces
+        // consecutivos. La modal de previsualización muestra los checkboxes
+        // en este mismo orden, y el POST recibe un subconjunto para crear
+        // solamente los seleccionados.
         const todosLosPartidos: {
             grupo_id: number; participante_local_id: number; participante_visitante_id: number; arbitro_jugador_id: number | null
         }[] = []
         for (const grupo of grupos) {
-            for (let localIndex = 0; localIndex < grupo.participantes.length - 1; localIndex++) {
-                for (let visitanteIndex = localIndex + 1; visitanteIndex < grupo.participantes.length; visitanteIndex++) {
-                    const local = grupo.participantes[localIndex].torneo_participantes
-                    const visitante = grupo.participantes[visitanteIndex].torneo_participantes
-                    const idsEnJuego = new Set([
-                        ...local.miembros.map(miembro => miembro.jugador_id),
-                        ...visitante.miembros.map(miembro => miembro.jugador_id)
-                    ])
-                    const arbitrosDisponibles = grupo.participantes
-                        .flatMap(item => item.torneo_participantes.miembros.map(miembro => miembro.jugadores))
-                        .filter(jugador => !idsEnJuego.has(jugador.id))
-                    todosLosPartidos.push({
-                        grupo_id: grupo.id,
-                        participante_local_id: local.id,
-                        participante_visitante_id: visitante.id,
-                        arbitro_jugador_id: arbitrosDisponibles[0]?.id ?? null
-                    })
-                }
+            const ids = grupo.participantes.map(p => p.torneo_participantes.id)
+            const ordenCruces = crucesRoundRobin(ids)
+            for (const [localId, visitanteId] of ordenCruces) {
+                const local = grupo.participantes.find(p => p.torneo_participantes.id === localId)!.torneo_participantes
+                const visitante = grupo.participantes.find(p => p.torneo_participantes.id === visitanteId)!.torneo_participantes
+                const idsEnJuego = new Set([
+                    ...local.miembros.map(miembro => miembro.jugador_id),
+                    ...visitante.miembros.map(miembro => miembro.jugador_id)
+                ])
+                const arbitrosDisponibles = grupo.participantes
+                    .flatMap(item => item.torneo_participantes.miembros.map(miembro => miembro.jugadores))
+                    .filter(jugador => !idsEnJuego.has(jugador.id))
+                todosLosPartidos.push({
+                    grupo_id: grupo.id,
+                    participante_local_id: local.id,
+                    participante_visitante_id: visitante.id,
+                    arbitro_jugador_id: arbitrosDisponibles[0]?.id ?? null
+                })
             }
         }
 
@@ -357,6 +305,16 @@ export async function POST(request: Request, { params }: RouteParams) {
                 where: { torneo_id: torneoId, categoria_id: Number(categoriaId), grupo_id: { not: null }, estado: 'FINALIZADO' }
             })
             if (finalizados > 0) throw new Error('No se pueden regenerar partidos que ya tienen resultados')
+            // Limpiamos la `posicion` de los participantes del grupo. La
+            // siembra inicial ya cumplió su rol al armar los grupos; al
+            // iniciar los partidos ese orden debe dejar de contar como
+            // "manual" para no contaminar el cálculo de desempate. Si
+            // el operador ya había resuelto un empate, se borra
+            // (consistente con que también se borran los partidos).
+            await tx.torneo_grupo_participantes.updateMany({
+                where: { grupo_id: { in: grupos.map(grupo => grupo.id) } },
+                data: { posicion: null }
+            })
             await tx.torneo_partidos_programados.deleteMany({
                 where: { torneo_id: torneoId, categoria_id: Number(categoriaId), grupo_id: { not: null } }
             })
@@ -386,6 +344,22 @@ export async function POST(request: Request, { params }: RouteParams) {
                         { partido_programado_id: partido.id, orden: 4, tipo: 'INDIVIDUAL' as const },
                         { partido_programado_id: partido.id, orden: 5, tipo: 'INDIVIDUAL' as const }
                     ])
+                })
+            } else if (torneo.modalidad === 'DOBLES') {
+                // Para DOBLES creamos un único detalle tipo DOBLES por partido.
+                // Esto permite que el wizard asigne los 2 jugadores (A, B vs X, Y)
+                // exactamente como en equipos. El endpoint PUT /alineacion ya
+                // acepta tanto DOBLES como EQUIPOS.
+                const creados = await tx.torneo_partidos_programados.findMany({
+                    where: { torneo_id: torneoId, categoria_id: Number(categoriaId), grupo_id: { in: grupos.map(grupo => grupo.id) } },
+                    select: { id: true }
+                })
+                await tx.torneo_partido_detalles.createMany({
+                    data: creados.map(partido => ({
+                        partido_programado_id: partido.id,
+                        orden: 1,
+                        tipo: 'DOBLES' as const,
+                    })),
                 })
             }
         }, { maxWait: 10_000, timeout: 30_000 })

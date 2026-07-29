@@ -33,13 +33,14 @@ export default function SelectorJugadores({
 
     const filteredJugadores = jugadores.filter(jugador =>
         jugador.nombre.toLowerCase().includes(searchTerm.toLowerCase())
+        || jugador.id.toString().includes(searchTerm)
     )
 
     return (
         <div className="space-y-5">
             <Input
                 type="text"
-                placeholder="Nombre del jugador..."
+                placeholder="Buscar por nombre o ID…"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 leadingIcon={<MagnifyingGlassIcon className="h-4 w-4" />}
@@ -53,7 +54,8 @@ export default function SelectorJugadores({
                     <div className="flex flex-wrap gap-1.5">
                         {selectedJugadores.map(jugador => (
                             <Badge key={jugador.id} variant="brand" className="gap-1.5 pr-1">
-                                {jugador.nombre}
+                                <span className="font-mono opacity-70">{jugador.id}</span>
+                                <span>{jugador.nombre}</span>
                                 <button
                                     type="button"
                                     onClick={() => onRemoveJugador(jugador.id)}
@@ -89,6 +91,7 @@ export default function SelectorJugadores({
                                                 onChange={() => onJugadorChange(jugador)}
                                                 className="h-4 w-4 rounded border-line text-brand focus:ring-brand bg-surface"
                                             />
+                                            <span className="font-mono text-fg-muted text-xs">{jugador.id}</span>
                                             <span className="text-fg">{jugador.nombre}</span>
                                             {jugador.categorias?.nombre && (
                                                 <Badge variant="neutral" className="ml-auto text-[0.65rem]">

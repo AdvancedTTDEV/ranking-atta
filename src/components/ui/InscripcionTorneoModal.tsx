@@ -436,7 +436,7 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
                                                     </p>
                                                     {inscripcion.nombrePersonalizado && (
                                                         <p className="text-xs text-fg-muted mt-0.5">
-                                                            {inscripcion.jugadores.map(jugador => jugador.nombre).join(' / ')}
+                                                            {inscripcion.jugadores.map(jugador => `${jugador.id} ${jugador.nombre}`).join(' / ')}
                                                         </p>
                                                     )}
                                                     {esAbierto && catNombre && (

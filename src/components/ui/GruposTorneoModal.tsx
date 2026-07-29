@@ -50,13 +50,12 @@ const nombreParticipante = (participante: TorneoParticipante) =>
     || 'Participante sin nombre'
 
 // Puntaje representativo del participante para ordenar el pool de mayor a
-// menor. Individual: ELO del jugador. Dobles/Equipos: promedio de los ELO
-// de los miembros (si todos son null, queda 0 y se va al final).
+// menor. Individual: ELO del jugador. Dobles/Equipos: SUMA de los ELOs
+// de los miembros (así una pareja de dos fuertes queda por encima de una
+// de uno fuerte y uno flojo, que es lo que refleja "fuerza de pareja").
 const puntajeParticipante = (p: TorneoParticipante): number => {
     if (p.jugadores) return p.jugadores.elo ?? 0
-    const elos = p.miembros.map(m => m.jugadores.elo ?? 0)
-    if (elos.length === 0) return 0
-    return elos.reduce((a, b) => a + b, 0) / elos.length
+    return p.miembros.reduce((acc, m) => acc + (m.jugadores.elo ?? 0), 0)
 }
 
 const eloParticipante = (participante: TorneoParticipante) => {
@@ -64,7 +63,59 @@ const eloParticipante = (participante: TorneoParticipante) => {
         ? participante.miembros.map(({ jugadores }) => jugadores)
         : participante.jugadores ? [participante.jugadores] : []
     if (integrantes.length === 0) return 0
-    return Math.round(integrantes.reduce((total, jugador) => total + (jugador.elo ?? 0), 0) / integrantes.length)
+    // Individual: ELO del jugador. Dobles/Equipos: SUMA de los ELOs de los
+    // miembros (la fuerza de la pareja es la suma, no el promedio).
+    const total = integrantes.reduce((acc, jugador) => acc + (jugador.elo ?? 0), 0)
+    return Math.round(total)
+}
+
+/**
+ * Clubes a los que pertenece un participante. Individual = un único
+ * club. Dobles/Equipos = el conjunto de clubes de sus integrantes,
+ * deduplicado. Si los clubes son mixtos, `clubesEfectivos` devuelve
+ * `null` por convención (un dobles mixto NO se considera "del club X"
+ * para chocar con nadie).
+ */
+const clubesParticipante = (p: TorneoParticipante): string[] => {
+    const integrantes = p.miembros.length > 0
+        ? p.miembros.map(m => m.jugadores)
+        : p.jugadores ? [p.jugadores] : []
+    const nombres = integrantes
+        .map(j => j.clubes?.nombre)
+        .filter((n): n is string => !!n)
+    return [...new Set(nombres)]
+}
+
+const clubesEfectivos = (p: TorneoParticipante): Set<string> | null => {
+    const cs = clubesParticipante(p)
+    if (cs.length === 0) return new Set()
+    if (cs.length > 1) return null // dobles mixto: no aplica
+    return new Set(cs)
+}
+
+/**
+ * Devuelve true si los dos participantes comparten un club efectivo.
+ * Dobles mixtos siempre devuelven false. Es solo informativo: en
+ * `GruposTorneoModal` se usa para marcar visualmente al participante
+ * que choca, NO para bloquear la asignación.
+ */
+const clubesChocan = (
+    a: TorneoParticipante,
+    b: TorneoParticipante
+): boolean => {
+    const ca = clubesEfectivos(a)
+    const cb = clubesEfectivos(b)
+    if (!ca || !cb) return false
+    if (ca.size === 0 || cb.size === 0) return false
+    for (const x of ca) if (cb.has(x)) return true
+    return false
+}
+
+const clubParticipante = (p: TorneoParticipante): string | null => {
+    const cs = clubesParticipante(p)
+    if (cs.length === 0) return null
+    if (cs.length === 1) return cs[0]
+    return cs.join(' / ')
 }
 
 export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenPartidos }: GruposTorneoModalProps) {
@@ -75,6 +126,9 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
     const [isDownloading, setIsDownloading] = useState(false)
     const [isSaving, setIsSaving] = useState(false)
     const [hasChanges, setHasChanges] = useState(false)
+    // Tamaño de cada grupo al generar en modo automático. Por defecto 4,
+    // pero se puede elegir 3 o 5 para ajustarse a la cantidad de inscritos.
+    const [tamañoGrupo, setTamañoGrupo] = useState(4)
 
     // Modo automático / manual
     const [modo, setModo] = useState<Modo>('auto')
@@ -200,7 +254,7 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     categoriaId: Number(categoriaOperativaId),
-                    tamañoGrupo: 4,
+                    tamañoGrupo: Number(tamañoGrupo),
                     abierto: esAbierto,
                 })
             })
@@ -232,6 +286,28 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
             .sort((a, b) => puntajeParticipante(b) - puntajeParticipante(a)),
         [inscritos, idsEnGrupos]
     )
+
+    /**
+     * Mapa participanteId → true si ese participante comparte club con
+     * algún otro integrante del mismo grupo. Es solo informativo: en
+     * la UI marcamos con un ⚠️ al participante conflictivo, pero el
+     * guardado sigue permitido.
+     */
+    const conflictoPorParticipante = useMemo(() => {
+        const m = new Map<number, boolean>()
+        for (const g of grupos) {
+            const ps = g.participantes.map(gp => gp.torneo_participantes)
+            for (let i = 0; i < ps.length; i++) {
+                for (let j = i + 1; j < ps.length; j++) {
+                    if (clubesChocan(ps[i], ps[j])) {
+                        m.set(ps[i].id, true)
+                        m.set(ps[j].id, true)
+                    }
+                }
+            }
+        }
+        return m
+    }, [grupos])
 
     // ── Modo manual: añadir grupo vacío ──────────────────────────────────────
     const handleAñadirGrupo = () => {
@@ -492,6 +568,20 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                         </div>
                     )}
 
+                    {/* Tamaño de grupo (solo en modo automático) */}
+                    {modo === 'auto' && (
+                        <Select
+                            label="Jugadores por grupo"
+                            value={tamañoGrupo.toString()}
+                            onChange={e => setTamañoGrupo(Number(e.target.value))}
+                            className="w-full sm:w-44"
+                        >
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                        </Select>
+                    )}
+
                     {/* Selector de modo */}
                     <div className="w-full sm:w-auto">
                         <label className="label">Modo</label>
@@ -607,9 +697,15 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                                             onDragEnd={handleDragEnd}
                                             onClick={() => togglePoolMenu(p.id)}
                                             className="flex items-center gap-1.5 bg-subtle hover:bg-surface-2 border border-line rounded-full pl-3 pr-2 py-1.5 text-sm font-semibold text-fg cursor-grab active:cursor-grabbing transition-colors"
+                                            title={clubParticipante(p) ? `${nombreParticipante(p)} · ${clubParticipante(p)}` : nombreParticipante(p)}
                                         >
                                             <Bars3Icon className="h-3.5 w-3.5 text-fg-muted" />
                                             {nombreParticipante(p)}
+                                            {clubParticipante(p) && (
+                                                <Badge variant="neutral" className="text-[0.6rem] font-normal">
+                                                    {clubParticipante(p)}
+                                                </Badge>
+                                            )}
                                             <Badge variant="brand" className="text-[0.65rem]">
                                                 {eloParticipante(p)}
                                             </Badge>
@@ -705,6 +801,8 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                                                 {grupo.participantes?.map((gp, idx) => {
                                                     const isDraggingThis = dragging?.participanteId === gp.id
                                                     const isDropTarget = dragOver?.grupoId === grupo.id && dragOver?.participanteId === gp.id
+                                                    const conflicto = conflictoPorParticipante.get(gp.torneo_participantes.id) === true
+                                                    const club = clubParticipante(gp.torneo_participantes)
                                                     return (
                                                         <li
                                                             key={gp.id}
@@ -730,6 +828,12 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                                                                     <Bars3Icon className="h-3.5 w-3.5 text-fg-muted shrink-0" />
                                                                     <span className="text-fg-muted text-xs w-4">{idx + 1}.</span>
                                                                     <span className="truncate">{nombreParticipante(gp.torneo_participantes)}</span>
+                                                                    {conflicto && (
+                                                                        <ExclamationTriangleIcon
+                                                                            className="h-3.5 w-3.5 text-warning shrink-0"
+                                                                            title="Comparte club con otro integrante de este grupo (preferencia, no error)"
+                                                                        />
+                                                                    )}
                                                                 </button>
                                                                 <Badge variant="brand" className="shrink-0 ml-2">
                                                                     {eloParticipante(gp.torneo_participantes)}
@@ -737,10 +841,8 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                                                             </div>
                                                             <p className="text-xs text-fg-muted mt-0.5 ml-5">
                                                                 {gp.torneo_participantes.miembros.length > 1
-                                                                    ? `${gp.torneo_participantes.miembros.length} integrantes`
-                                                                    : (gp.torneo_participantes.miembros[0]?.jugadores.clubes?.nombre
-                                                                        ?? gp.torneo_participantes.jugadores?.clubes?.nombre
-                                                                        ?? '—')}
+                                                                    ? `${gp.torneo_participantes.miembros.length} integrantes${club ? ` · ${club}` : ''}`
+                                                                    : (club ?? '—')}
                                                             </p>
 
                                                             {/* Menú de sustitución por clic */}

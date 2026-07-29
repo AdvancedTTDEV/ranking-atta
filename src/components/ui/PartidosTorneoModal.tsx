@@ -2,13 +2,18 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'react-hot-toast'
-import { PrinterIcon, PlayIcon, CheckBadgeIcon, TrophyIcon, ExclamationTriangleIcon, ChevronUpDownIcon, CheckIcon } from '@heroicons/react/24/outline'
+import { PrinterIcon, PlayIcon, CheckBadgeIcon, TrophyIcon, ExclamationTriangleIcon, ChevronUpDownIcon, CheckIcon, UsersIcon } from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import PartidosResultadoModal from '@/components/ui/PartidosResultadoModal'
+import PartidosGrupoModal, { GrupoLite } from '@/components/ui/PartidosGrupoModal'
+import ResolverEmpateModal from '@/components/ui/ResolverEmpateModal'
+import EncuentroEquiposWizardModal from '@/components/ui/EncuentroEquiposWizardModal'
 import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
+import { imprimirAlineacionesBatch as importarEImprimirAlineacionBatch } from '@/lib/torneo/imprimirAlineacion'
+import { MATCHUPS_EQUIPOS, MATCHUPS_DOBLES } from '@/lib/torneo/matchups'
 
 interface Categoria { id: number; nombre: string }
 interface Jugador { id: number; nombre: string }
@@ -27,11 +32,14 @@ interface DetalleEquipo {
     estado: 'PENDIENTE' | 'FINALIZADO'
     sets_local: number
     sets_visitante: number
-    jugadores: { jugador_id: number; lado: 'LOCAL' | 'VISITANTE'; jugadores: Jugador }[]
+    jugadores: { jugador_id: number; lado: 'LOCAL' | 'VISITANTE'; orden: number; jugadores: Jugador }[]
     sets: SetPartido[]
 }
 interface PosicionGrupo {
     posicion: number
+    /** Posición "real" considerando empates: tres empatados muestran 2/2/2
+     *  en vez de 2/3/4. Para no-empatados, coincide con `posicion`. */
+    posicion_empatada?: number
     participante_id: number
     nombre: string
     victorias: number
@@ -42,7 +50,13 @@ interface PosicionGrupo {
     puntosContra: number
     requiere_decision_manual: boolean
 }
-interface ClasificacionGrupo { grupoId: number; numero_grupo: number; posiciones: PosicionGrupo[] }
+interface ClasificacionGrupo {
+    grupoId: number
+    numero_grupo: number
+    posiciones: PosicionGrupo[]
+    /** IDs de participantes que el sistema no puede desempatar. */
+    pendientes_manual?: number[]
+}
 interface Partido {
     id: number
     orden: number
@@ -86,33 +100,90 @@ function TablasClasificacion({
     clasificaciones,
     onClickGrupo,
     grupoFiltroId,
+    borradoresPorGrupo,
+    onResolverEmpate,
+    onConfigurarAlineacion,
+    permiteAlineacion,
 }: {
     clasificaciones: ClasificacionGrupo[]
     onClickGrupo?: (grupoId: number) => void
     grupoFiltroId?: number | null
+    /** Mapa grupoId → IDs de partidos con borrador. */
+    borradoresPorGrupo?: Map<number, Set<number>>
+    /** Abre el modal de resolución de empate para el grupo dado. */
+    onResolverEmpate?: (grupoId: number) => void
+    /** Abre el wizard de alineación para el grupo dado. Solo DOBLES/EQUIPOS. */
+    onConfigurarAlineacion?: (grupoId: number) => void
+    /** Si false, el botón "Alineación" no se muestra (INDIVIDUAL). */
+    permiteAlineacion?: boolean
 }) {
     if (clasificaciones.length === 0) return null
     return (
         <section className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
             {clasificaciones.map(grupo => {
                 const activo = grupoFiltroId === grupo.grupoId
+                const tieneBorrador = !!borradoresPorGrupo?.get(grupo.grupoId)?.size
+                const idsPendientes = grupo.pendientes_manual ?? []
+                const tieneEmpate = idsPendientes.length > 0
+                // Calculamos el rango de posiciones empatadas para el banner
+                // (ej. "posiciones 2 a 4").
+                const posicionesPendientes = grupo.posiciones
+                    .filter(p => idsPendientes.includes(p.participante_id))
+                    .map(p => p.posicion_empatada ?? p.posicion)
+                const posMin = posicionesPendientes.length > 0 ? Math.min(...posicionesPendientes) : null
+                const posMax = posicionesPendientes.length > 0 ? Math.max(...posicionesPendientes) : null
                 return (
                     <div
                         key={grupo.grupoId}
                         className={`card-flush overflow-hidden transition-colors ${activo ? 'ring-2 ring-brand' : ''}`}
                     >
-                        <div className="px-4 py-2.5 bg-subtle border-b border-line text-xs font-bold text-fg-muted uppercase tracking-wider flex items-center justify-between">
-                            <span>Clasificación · Grupo {grupo.numero_grupo}</span>
-                            {onClickGrupo && (
-                                <button
-                                    type="button"
-                                    onClick={() => onClickGrupo(grupo.grupoId)}
-                                    className="text-[0.65rem] font-normal normal-case text-brand hover:underline"
-                                >
-                                    {activo ? 'Quitar filtro' : 'Ver partidos →'}
-                                </button>
-                            )}
+                        <div className="px-4 py-2.5 bg-subtle border-b border-line text-xs font-bold text-fg-muted uppercase tracking-wider flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-2">
+                                Clasificación · Grupo {grupo.numero_grupo}
+                                {tieneBorrador && (
+                                    <Badge variant="warning">
+                                        <span className="inline-flex items-center gap-1">
+                                            <ExclamationTriangleIcon className="h-3 w-3" />
+                                            Borrador
+                                        </span>
+                                    </Badge>
+                                )}
+                            </span>
+                            <div className="flex items-center gap-2">
+                                {permiteAlineacion && onConfigurarAlineacion && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onConfigurarAlineacion(grupo.grupoId)}
+                                        className="text-[0.65rem] font-normal normal-case text-brand hover:underline inline-flex items-center gap-1"
+                                    >
+                                        <UsersIcon className="h-3 w-3" /> Configurar alineación
+                                    </button>
+                                )}
+                                {onClickGrupo && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onClickGrupo(grupo.grupoId)}
+                                        className="text-[0.65rem] font-normal normal-case text-brand hover:underline"
+                                    >
+                                        {activo ? 'Quitar filtro' : 'Ver partidos →'}
+                                    </button>
+                                )}
+                            </div>
                         </div>
+                        {tieneEmpate && onResolverEmpate && (
+                            <button
+                                type="button"
+                                onClick={() => onResolverEmpate(grupo.grupoId)}
+                                className="w-full px-4 py-2 bg-warning-soft/40 border-b border-warning/30 text-left flex items-center gap-2 hover:bg-warning-soft/60 transition-colors"
+                                title="El sistema no puede desempatar a estos participantes. Pulsa para asignar el orden manualmente."
+                            >
+                                <ExclamationTriangleIcon className="h-4 w-4 text-warning flex-shrink-0" />
+                                <span className="text-xs text-fg">
+                                    <b className="font-semibold">Empate en posiciones {posMin}{posMin !== posMax ? ` a ${posMax}` : ''}.</b>{' '}
+                                    <span className="text-fg-muted">Toca aquí para resolver quién pasa primero.</span>
+                                </span>
+                            </button>
+                        )}
                         <div className="overflow-x-auto">
                             <table className="table-compact">
                                 <thead>
@@ -130,20 +201,24 @@ function TablasClasificacion({
                                         const filaClass = [
                                             'transition-colors',
                                             onClickGrupo ? 'cursor-pointer hover:bg-subtle' : '',
-                                            posicion.requiere_decision_manual ? 'bg-warning-soft' : '',
+                                            posicion.requiere_decision_manual ? 'bg-warning-soft/40 border-l-2 border-warning' : '',
                                         ].filter(Boolean).join(' ')
+                                        const tooltip = posicion.requiere_decision_manual
+                                            ? 'Empate de W, sets y puntos: el sistema no puede desempatar. Asigna la posición manualmente antes de continuar.'
+                                            : undefined
                                         const contenido = (
                                             <>
-                                                <td className="font-bold text-fg">{posicion.posicion}</td>
+                                                <td className="font-bold text-fg">
+                                                    {posicion.requiere_decision_manual
+                                                        ? <span title={tooltip} className="inline-flex items-center gap-1">
+                                                            {posicion.posicion_empatada ?? posicion.posicion}
+                                                            <ExclamationTriangleIcon className="h-3.5 w-3.5 text-warning" />
+                                                        </span>
+                                                        : posicion.posicion_empatada ?? posicion.posicion}
+                                                </td>
                                                 <td className="font-medium">
                                                     <span className="inline-flex items-center gap-1.5">
                                                         {posicion.nombre}
-                                                        {posicion.requiere_decision_manual && (
-                                                            <ExclamationTriangleIcon
-                                                                className="h-3.5 w-3.5 text-warning"
-                                                                title="Empate aún no resuelto: requiere decisión manual"
-                                                            />
-                                                        )}
                                                     </span>
                                                 </td>
                                                 <td className="text-center">{posicion.victorias}</td>
@@ -153,11 +228,11 @@ function TablasClasificacion({
                                             </>
                                         )
                                         return onClickGrupo ? (
-                                            <tr key={posicion.participante_id} className={filaClass} onClick={() => onClickGrupo(grupo.grupoId)}>
+                                            <tr key={posicion.participante_id} className={filaClass} title={tooltip} onClick={() => onClickGrupo(grupo.grupoId)}>
                                                 {contenido}
                                             </tr>
                                         ) : (
-                                            <tr key={posicion.participante_id} className={filaClass}>
+                                            <tr key={posicion.participante_id} className={filaClass} title={tooltip}>
                                                 {contenido}
                                             </tr>
                                         )
@@ -180,13 +255,18 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
     const [generando, setGenerando] = useState(false)
     const [partidoResultadoId, setPartidoResultadoId] = useState<number | null>(null)
     const [borradores, setBorradores] = useState<Record<number, { sets: { local: number; visitante: number }[] }>>({})
-    const [grupoFiltroId, setGrupoFiltroId] = useState<number | null>(null)
+    /** ID del grupo cuyo modal de partidos está abierto, o null si ninguno. */
+    const [grupoModalId, setGrupoModalId] = useState<number | null>(null)
+    /** ID del grupo cuyo modal de resolución de empate está abierto. */
+    const [grupoResolucionId, setGrupoResolucionId] = useState<number | null>(null)
     const [modalGeneracion, setModalGeneracion] = useState<{
         cruces: CruceDisponible[]
         seleccionados: Set<string>
         arbitroAsignado: Map<string, number | null>
     } | null>(null)
     const [todasCategorias, setTodasCategorias] = useState<Categoria[]>([])
+    /** ID del grupo cuyo wizard de alineación está abierto, o null. */
+    const [wizardGrupoId, setWizardGrupoId] = useState<number | null>(null)
 
     // Cargamos el catálogo completo de categorías para soportar torneos
     // "abiertos" (DOBLES, EQUIPOS o primera categoría), donde el selector
@@ -228,13 +308,54 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         return [...grupos.values()].sort((a, b) => a.numero - b.numero)
     }, [partidos])
 
-    // Si hay filtro de grupo activo, ocultamos los grupos que no coinciden.
-    const gruposVisibles = useMemo(
-        () => grupoFiltroId === null
-            ? partidosPorGrupo
-            : partidosPorGrupo.filter(g => g.id === grupoFiltroId),
-        [partidosPorGrupo, grupoFiltroId]
-    )
+    // Indicador de borrador por grupo: para cada grupo, los IDs de partidos
+    // que tienen un borrador en memoria. La cabecera de la tabla de
+    // clasificación muestra el badge si el set no está vacío.
+    const borradoresPorGrupo = useMemo(() => {
+        const mapa = new Map<number, Set<number>>()
+        for (const partido of partidos) {
+            if (!borradores[partido.id] || !partido.torneo_grupos) continue
+            const set = mapa.get(partido.torneo_grupos.id) || new Set<number>()
+            set.add(partido.id)
+            mapa.set(partido.torneo_grupos.id, set)
+        }
+        return mapa
+    }, [partidos, borradores])
+
+    /** Datos del grupo actualmente en el wizard de alineación. El wizard
+     *  recibe el grupo completo: sus 2 equipos + todos sus partidos. Así
+     *  configuramos la alineación ABC/XYZ UNA vez por grupo y se replica
+     *  a todos los partidos. */
+    const grupoWizard = useMemo(() => {
+        if (wizardGrupoId === null) return null
+        const grupo = partidosPorGrupo.find(g => g.id === wizardGrupoId)
+        if (!grupo || grupo.partidos.length === 0) return null
+        // En un round-robin todos los partidos enfrentan a exactamente los
+        // 2 mismos participantes. Tomamos el primero como referencia.
+        const primerPartido = grupo.partidos[0]
+        return {
+            grupoId: grupo.id,
+            numeroGrupo: grupo.numero,
+            equipos: {
+                local: primerPartido.participante_local,
+                visitante: primerPartido.participante_visitante,
+            },
+            partidos: grupo.partidos.map(p => ({
+                id: p.id,
+                orden: p.orden,
+                detalles: p.detalles.map(d => ({
+                    id: d.id,
+                    orden: d.orden,
+                    tipo: d.tipo,
+                    jugadores: d.jugadores.map(j => ({
+                        jugador_id: j.jugador_id,
+                        lado: j.lado,
+                        jugadores: j.jugadores,
+                    })),
+                })),
+            })),
+        }
+    }, [wizardGrupoId, partidosPorGrupo])
 
     useEffect(() => {
         // Al cambiar de torneo, seleccionamos la primera categoría SOLO si
@@ -362,54 +483,312 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         }
     }
 
-    const abrirResultado = (partido: Partido) => {
-        setPartidoResultadoId(partido.id)
+    const abrirResultado = (partidoId: number) => {
+        setPartidoResultadoId(partidoId)
+    }
+
+    /**
+     * Valida un set: ambos enteros 0-99, ganador a 11 con diferencia de 2,
+     * o más allá de 11-10 si hay empate largo. Esto refleja lo que exige el
+     * endpoint PUT y nos permite rechazar un partido inválido SIN enviarlo
+     * al server (lo que rompería el batch y dejaría borradores fantasma en
+     * memoria).
+     */
+    const validarSets = (sets: { local: number; visitante: number }[]): string | null => {
+        if (sets.length < 3 || sets.length > 5) return 'Ingresa entre 3 y 5 sets'
+        for (const set of sets) {
+            if (!Number.isInteger(set.local) || !Number.isInteger(set.visitante)) return 'Los sets deben ser enteros'
+            if (set.local < 0 || set.visitante < 0) return 'Los puntos no pueden ser negativos'
+            if (set.local > 99 || set.visitante > 99) return 'Puntos fuera de rango'
+            const mayor = Math.max(set.local, set.visitante)
+            const menor = Math.min(set.local, set.visitante)
+            if (mayor < 11 || mayor - menor < 2) return 'Cada set debe ganarse a 11 con diferencia de 2'
+        }
+        const setsLocal = sets.filter(s => s.local > s.visitante).length
+        const setsVisitante = sets.filter(s => s.visitante > s.local).length
+        if (setsLocal !== 3 && setsVisitante !== 3) return 'El ganador debe obtener exactamente 3 sets'
+        return null
     }
 
     const guardarBorradores = async () => {
         if (!torneo || Object.keys(borradores).length === 0) return
         setGenerando(true)
-        try {
-            for (const [partidoId, resultado] of Object.entries(borradores)) {
+        const guardados: number[] = []
+        const fallidos: { id: number; motivo: string }[] = []
+        // Trabajamos sobre una copia para no mutar el estado durante el loop.
+        const borradoresActuales = Object.entries(borradores)
+        for (const [partidoIdStr, resultado] of borradoresActuales) {
+            const partidoId = Number(partidoIdStr)
+            const errorValidacion = validarSets(resultado.sets)
+            if (errorValidacion) {
+                fallidos.push({ id: partidoId, motivo: errorValidacion })
+                continue
+            }
+            try {
                 const response = await fetch(`/api/torneos/${torneo.id}/partidos/${partidoId}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(resultado),
                 })
-                const data = await response.json()
-                if (!response.ok) throw new Error(data.error || 'No se pudo guardar un resultado')
+                if (!response.ok) {
+                    const data = await response.json().catch(() => ({}))
+                    // 409: el partido ya está finalizado en BD (caso típico:
+                    // otro operador ya lo guardó, o este mismo cliente lo
+                    // guardó antes y el borrador quedó en memoria). Lo
+                    // tratamos como "guardado" para limpiarlo del state.
+                    if (response.status === 409) {
+                        guardados.push(partidoId)
+                    } else {
+                        fallidos.push({ id: partidoId, motivo: data.error || `HTTP ${response.status}` })
+                    }
+                    continue
+                }
+                guardados.push(partidoId)
+            } catch (error) {
+                fallidos.push({ id: partidoId, motivo: error instanceof Error ? error.message : 'Error de red' })
             }
-            toast.success('Todos los resultados fueron guardados y el ranking actualizado')
-            setBorradores({})
-            cargar()
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : 'Error al guardar los cambios')
-        } finally {
-            setGenerando(false)
         }
+        // Limpiamos de `borradores` los que sí quedaron persistidos (éxito o
+        // 409), conservando los que fallaron para que el usuario los revise.
+        if (guardados.length > 0) {
+            setBorradores(prev => {
+                const siguiente = { ...prev }
+                for (const id of guardados) delete siguiente[id]
+                return siguiente
+            })
+        }
+        // Refrescamos SIEMPRE para sincronizar con la BD: partidos
+        // finalizados, clasificaciones recalculadas, borradores fantasma
+        // eliminados de la UI.
+        await cargar()
+        if (fallidos.length === 0) {
+            toast.success(`${guardados.length} resultado${guardados.length === 1 ? '' : 's'} guardados y ranking actualizado`)
+        } else if (guardados.length === 0) {
+            toast.error(`No se guardó ningún resultado. Revisa los ${fallidos.length} borrador${fallidos.length === 1 ? '' : 'es'}`)
+        } else {
+            const motivo = fallidos[0].motivo
+            toast.error(`${guardados.length} guardados, ${fallidos.length} con error: ${motivo}${fallidos.length > 1 ? '…' : ''}`)
+        }
+        setGenerando(false)
     }
 
     const imprimir = () => {
         if (!torneo || partidosPorGrupo.length === 0) return
         const categoria = categorias.find(item => item.id.toString() === categoriaId)?.nombre || ''
-        const paginas = partidosPorGrupo.map(grupo => `
+        const fecha = new Date().toLocaleDateString('es-PA', { day: '2-digit', month: 'long', year: 'numeric' })
+        // Genera el alfabético A, B, C... para etiquetar cada encuentro.
+        // Si la hoja tiene más de 26 partidos, sigue con AA, AB...
+        const letraEncuentro = (idx: number): string => {
+            let n = idx
+            let s = ''
+            do {
+                s = String.fromCharCode(65 + (n % 26)) + s
+                n = Math.floor(n / 26) - 1
+            } while (n >= 0)
+            return s
+        }
+        // Matchups estándar importados para derivar QUÉ jugadores juegan
+        // cada cruce. Solo se imprimen los jugadores que efectivamente
+        // juegan ese partido (no todos los del roster).
+        // Ej: partido 1 = A+B vs X+Y → solo imprime A, B (locales) y X, Y (visitantes).
+        const modalidadEquipos = torneo.modalidad === 'DOBLES' || torneo.modalidad === 'EQUIPOS'
+        const matchups = modalidadEquipos
+            ? (torneo.modalidad === 'DOBLES' ? MATCHUPS_DOBLES : MATCHUPS_EQUIPOS)
+            : []
+        // Resolución local de letra → jugador. Busca el detalle del partido
+        // cuyo matchup incluye esa letra (en el orden local/visitante) y
+        // devuelve el jugador guardado en `orden` correspondiente. Como cada
+        // detalle guarda SOLO los jugadores que juegan ESE cruce, el `orden`
+        // dentro del detalle mapea 1-a-1 con las letras del matchup.
+        //
+        //   Partido 1 (DOBLES, A+B vs X+Y):
+        //     detalle 1 jugadores locales = [A (orden 1), B (orden 2)]
+        //   Partido 2 (INDIVIDUAL, A vs X):
+        //     detalle 2 jugadores locales = [A (orden 1)]
+        //
+        // La LETRA de cada jugador se deriva del `orden` y del matchup de
+        // ese detalle (índice del detalle dentro del partido = índice del
+        // matchup en MATCHUPS_EQUIPOS/DOBLES).
+        const jugadorPorSlot = (
+            partido: Partido,
+            lado: 'LOCAL' | 'VISITANTE',
+            letra: string,
+            idxPartido: number,
+        ): Jugador | null => {
+            const detalles = partido.detalles ?? []
+            // Encontramos el matchup que contiene esta letra en el lado pedido.
+            // Cada detalle del partido se mapea al matchup por su `orden` (1→matchup 0, etc.).
+            const detallesOrdenados = detalles.slice().sort((a, b) => a.orden - b.orden)
+            const m = matchups[idxPartido]
+            if (!m) return null
+            const letrasLado: string[] = Array.isArray(
+                m.cruces[lado === 'LOCAL' ? 'local' : 'visitante'],
+            )
+                ? (m.cruces[lado === 'LOCAL' ? 'local' : 'visitante'] as string[])
+                : [m.cruces[lado === 'LOCAL' ? 'local' : 'visitante'] as string]
+            const posicionEnLado = letrasLado.indexOf(letra)
+            if (posicionEnLado < 0) return null
+            // Encontramos el detalle que corresponde al matchup `idxPartido`.
+            const detalle = detallesOrdenados[idxPartido]
+            if (!detalle) return null
+            const jugadores = (detalle.jugadores ?? [])
+                .filter(j => j.lado === lado)
+                .sort((a, b) => a.orden - b.orden)
+            return jugadores[posicionEnLado]?.jugadores ?? null
+        }
+        // Genera la lista de integrantes para un partido siguiendo el orden
+        // de los matchups estándar (A, B, C → partido 1 = AB, partido 2 = A, ...).
+        // Si no hay alineación guardada, fallback a la lista plana de miembros.
+        const integranteLinea = (j: Jugador): string => `${j.id} — ${escaparHtml(j.nombre)}`
+        const letrasEnOrden = (lado: 'LOCAL' | 'VISITANTE', idxPartido: number): string[] => {
+            if (!modalidadEquipos) return []
+            const m = matchups[idxPartido]
+            if (!m) return []
+            return Array.isArray(m.cruces[lado === 'LOCAL' ? 'local' : 'visitante'])
+                ? (m.cruces[lado === 'LOCAL' ? 'local' : 'visitante'] as string[])
+                : [m.cruces[lado === 'LOCAL' ? 'local' : 'visitante'] as string]
+        }
+        const integrantes = (
+            participante: Participante,
+            lado: 'LOCAL' | 'VISITANTE',
+            partido: Partido,
+            idxPartido: number,
+        ): string[] => {
+            const letras = letrasEnOrden(lado, idxPartido)
+            if (letras.length > 0 && partido.detalles && partido.detalles.length > 0) {
+                const lineas: string[] = []
+                letras.forEach(letra => {
+                    const j = jugadorPorSlot(partido, lado, letra, idxPartido)
+                    if (j) lineas.push(`<b>${letra}</b> · ${integranteLinea(j)}`)
+                })
+                if (lineas.length > 0) return lineas
+            }
+            // Fallback: lista plana de miembros del equipo.
+            if (participante.miembros.length > 0) {
+                return participante.miembros.map(m => integranteLinea(m.jugadores))
+            }
+            return participante.jugadores ? [integranteLinea(participante.jugadores)] : []
+        }
+        const paginas = partidosPorGrupo.map(grupo => {
+            // Numeramos los encuentros SOLO dentro de esta hoja (A, B, C…).
+            const esIndividual = torneo.modalidad === 'INDIVIDUAL'
+            const filas = grupo.partidos.map((partido, idx) => {
+                const localIntegs = integrantes(partido.participante_local, 'LOCAL', partido, idx)
+                const visitIntegs = integrantes(partido.participante_visitante, 'VISITANTE', partido, idx)
+                // Para INDIVIDUAL el jugador también aparece con su ID
+                // debajo del nombre (en vez de la lista de integrantes).
+                const bloqueLocal = esIndividual
+                    ? `<div class="equipo-nombre">${escaparHtml(nombreParticipante(partido.participante_local))}</div>
+                       <div class="equipo-id">ID: ${partido.participante_local.jugadores?.id ?? (partido.participante_local.miembros[0]?.jugadores?.id ?? '')}</div>`
+                    : `<div class="equipo-nombre">${escaparHtml(nombreParticipante(partido.participante_local))}</div>
+                       <ul class="equipo-integrantes">${localIntegs.map(n => `<li>${n}</li>`).join('')}</ul>`
+                const bloqueVisit = esIndividual
+                    ? `<div class="equipo-nombre">${escaparHtml(nombreParticipante(partido.participante_visitante))}</div>
+                       <div class="equipo-id">ID: ${partido.participante_visitante.jugadores?.id ?? (partido.participante_visitante.miembros[0]?.jugadores?.id ?? '')}</div>`
+                    : `<div class="equipo-nombre">${escaparHtml(nombreParticipante(partido.participante_visitante))}</div>
+                       <ul class="equipo-integrantes">${visitIntegs.map(n => `<li>${n}</li>`).join('')}</ul>`
+                // Árbitro: si está asignado por la API (partidos con
+                // `arbitro_jugador_id` o `arbitro.nombre`), lo
+                // imprimimos; si no, queda línea en blanco para asignar a mano.
+                const arbitroAsignado = partido.arbitro?.nombre?.trim() || ''
+                const arbitroBloque = arbitroAsignado
+                    ? `<div class="arbitro-nombre">${escaparHtml(arbitroAsignado)}</div>`
+                    : `<div class="arbitro-linea"></div>`
+                return `
+                <tr>
+                  <td class="letra">${letraEncuentro(idx)}</td>
+                  <td class="equipo">${bloqueLocal}</td>
+                  <td class="equipo">${bloqueVisit}</td>
+                  <td class="arbitro">${arbitroBloque}</td>
+                  <td class="puntos"><div class="puntos-linea"><span class="puntos-izq"></span><span class="puntos-separador">/</span><span class="puntos-der"></span></div></td>
+                  <td class="puntos"><div class="puntos-linea"><span class="puntos-izq"></span><span class="puntos-separador">/</span><span class="puntos-der"></span></div></td>
+                  <td class="puntos"><div class="puntos-linea"><span class="puntos-izq"></span><span class="puntos-separador">/</span><span class="puntos-der"></span></div></td>
+                  <td class="puntos"><div class="puntos-linea"><span class="puntos-izq"></span><span class="puntos-separador">/</span><span class="puntos-der"></span></div></td>
+                  <td class="puntos"><div class="puntos-linea"><span class="puntos-izq"></span><span class="puntos-separador">/</span><span class="puntos-der"></span></div></td>
+                  <td class="total"><div class="puntos-linea"><span class="puntos-izq"></span><span class="puntos-separador">/</span><span class="puntos-der"></span></div></td>
+                </tr>`
+            }).join('')
+            return `
             <section class="page">
-              <h1>${escaparHtml(torneo.nombre)}</h1>
-              <h2>Grupo ${grupo.numero} · Categoría ${escaparHtml(categoria)}</h2>
-              <p class="note">Hoja de partidos · Modalidad: ${escaparHtml(torneo.modalidad)}</p>
-              <table><thead><tr><th>#</th><th>Local</th><th>Visitante</th><th>Árbitro</th><th>Sets</th><th>Resultado</th></tr></thead>
-              <tbody>${grupo.partidos.map(partido => `<tr>
-                <td>${partido.orden}</td><td>${escaparHtml(nombreParticipante(partido.participante_local))}</td>
-                <td>${escaparHtml(nombreParticipante(partido.participante_visitante))}</td>
-                <td>${escaparHtml(partido.arbitro?.nombre || 'Asignar')}</td>
-                <td class="sets">___ / ___ / ___ / ___ / ___</td><td class="resultado">____ : ____</td>
-              </tr>`).join('')}</tbody></table>
-              <p class="footer">Registrar los resultados en el sistema al finalizar cada partido.</p>
-            </section>`).join('')
-        const ventana = window.open('', '_blank', 'width=900,height=700')
+              <header class="cabecera">
+                <img class="logo logo-izq" src="/logo.jpg" alt="ATTA" onerror="this.style.visibility='hidden'" />
+                <div class="titulo-central">
+                  <div class="titulo-torneo">${escaparHtml(torneo.nombre)}</div>
+                  <div class="titulo-sub">Hoja de encuentros · Grupo ${grupo.numero} · ${escaparHtml(categoria)}</div>
+                </div>
+                <img class="logo logo-der" src="/templates/escudo-panama.png" alt="Alcaldía de Panamá" onerror="this.style.visibility='hidden'" />
+              </header>
+              <table class="encuentros">
+                <thead>
+                  <tr>
+                    <th class="th-letra" rowspan="2">Encuentro</th>
+                    <th rowspan="2">${esIndividual ? 'Jugador local' : 'Nombre de equipo<br/><span class="th-sub">Integrantes</span>'}</th>
+                    <th rowspan="2">${esIndividual ? 'Jugador visitante' : '&nbsp;'}</th>
+                    <th rowspan="2">Árbitro</th>
+                    <th colspan="5">Puntos por set · local / visitante</th>
+                    <th rowspan="2">Total<br/>sets</th>
+                  </tr>
+                  <tr>
+                    <th class="th-set">Set 1</th>
+                    <th class="th-set">Set 2</th>
+                    <th class="th-set">Set 3</th>
+                    <th class="th-set">Set 4</th>
+                    <th class="th-set">Set 5</th>
+                  </tr>
+                </thead>
+                <tbody>${filas}</tbody>
+              </table>
+              <div class="pie-nota">Anotar el tanteo de cada set con formato <b>local / visitante</b>. Partido al mejor de 5 sets.</div>
+              <div class="pie-espacio"></div>
+            </section>`
+        }).join('')
+        const ventana = window.open('', '_blank', 'width=1200,height=1500')
         if (!ventana) { toast.error('El navegador bloqueó la ventana de impresión'); return }
         ventana.document.write(`<!doctype html><html><head><title>Hojas de partidos</title><style>
-            @page{size:A4 portrait;margin:16mm} body{font-family:Arial,sans-serif;color:#172033}.page{page-break-after:always}.page:last-child{page-break-after:auto}h1{font-size:21px;margin:0 0 4px}h2{font-size:16px;margin:0 0 5px}.note,.footer{font-size:11px;color:#566175}.footer{margin-top:15px}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{border:1px solid #64748b;padding:9px 7px;font-size:11px;text-align:left;vertical-align:middle}th{background:#e2e8f0}.sets{letter-spacing:1px;white-space:nowrap}.resultado{font-weight:bold;white-space:nowrap}@media print{body{margin:0}}
+            /* Tamaño carta (Letter, 8.5"×11"), vertical, sin padding en
+             * pantalla para que la tabla llegue de borde a borde. El
+             * margen de impresión es 4mm para que la impresora no
+             * recorte el contenido. Celdas altas y tipografía grande para
+             * que el operador pueda escribir el tanteo a mano con
+             * comodidad. */
+            @page{size:letter portrait;margin:4mm}
+            html,body{width:8.5in;height:11in;margin:0;padding:0;box-sizing:border-box}
+            body{font-family:Arial,sans-serif;color:#0f172a;margin:0;padding:0}
+            .page{page-break-after:always;padding:0}.page:last-child{page-break-after:auto}
+            .cabecera{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:8px 8px 14px;border-bottom:2.5px solid #0f172a}
+            .logo{height:110px;object-fit:contain}
+            .titulo-central{flex:1;text-align:center}
+            .titulo-torneo{font-size:44px;font-weight:bold;font-style:italic;letter-spacing:.5px;line-height:1.05}
+            .titulo-sub{font-size:18px;color:#475569;margin-top:6px;letter-spacing:1px}
+            table.encuentros{width:100%;border-collapse:collapse;margin-top:18px}
+            table.encuentros th,table.encuentros td{border:2.5px solid #0f172a;padding:18px 12px;font-size:16px;vertical-align:middle}
+            table.encuentros thead th{background:#f1f5f9;text-align:center;font-size:15px;letter-spacing:.5px}
+            th.th-sub{font-weight:normal;font-style:italic;color:#475569;letter-spacing:0;font-size:12px}
+            th.th-letra,td.letra{width:74px;text-align:center;font-weight:bold;font-size:28px}
+            th.th-set{width:78px;background:#f8fafc}
+            td.equipo{min-width:0}
+            td.equipo .equipo-nombre{font-weight:bold;font-size:22px;line-height:1.1}
+            td.equipo .equipo-id{font-size:14px;color:#475569;font-family:'Courier New',monospace;margin-top:3px;letter-spacing:.5px}
+            td.equipo ul.equipo-integrantes{list-style:none;padding:0;margin:4px 0 0 0;font-size:14px;color:#334155;line-height:1.35}
+            td.equipo ul.equipo-integrantes li{padding:1px 0}
+            td.equipo ul.equipo-integrantes li:before{content:"· ";color:#94a3b8}
+            td.equipo ul.equipo-integrantes li b{color:#0f172a;font-weight:bold;margin-right:2px}
+            td.arbitro{width:180px;text-align:center;vertical-align:middle}
+            td.arbitro .arbitro-linea{border-bottom:2px solid #94a3b8;height:90px}
+            td.arbitro .arbitro-nombre{font-size:20px;font-weight:bold;line-height:1.1;padding:2px 0;height:90px;display:flex;align-items:center;justify-content:center}
+            /* Celdas de puntos por set: MUY altas y anchas para escribir a mano. */
+            td.puntos{width:82px}
+            td.puntos .puntos-linea{display:flex;align-items:flex-end;justify-content:center;gap:4px;height:90px;padding-bottom:6px}
+            td.puntos .puntos-linea .puntos-izq{flex:1;border-bottom:2.5px solid #94a3b8;min-width:18px;height:60px}
+            td.puntos .puntos-linea .puntos-separador{font-weight:bold;color:#475569;font-size:18px;padding:0 3px}
+            td.puntos .puntos-linea .puntos-der{flex:1;border-bottom:2.5px solid #94a3b8;min-width:18px;height:60px}
+            /* Total: bordes más gruesos porque se llena con el tanteo agregado. */
+            td.total{width:110px;background:#f8fafc}
+            td.total .puntos-linea .puntos-izq,td.total .puntos-linea .puntos-der{border-bottom:3.5px solid #0f172a;height:60px}
+            .pie-nota{font-size:14px;color:#475569;margin-top:24px;text-align:right;font-style:italic;padding:0 6px}
+            .pie-nota b{color:#0f172a}
+            .pie-espacio{height:1in}
+            @media print{body{padding:0}}
         </style></head><body>${paginas}<script>window.onload=()=>window.print()<\/script></body></html>`)
         ventana.document.close()
     }
@@ -476,6 +855,32 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                         >
                             Imprimir hojas
                         </Button>
+                        {(torneo?.modalidad === 'DOBLES' || torneo?.modalidad === 'EQUIPOS') && (
+                            <Button
+                                variant="secondary"
+                                onClick={() => {
+                                    // Hojas de alineación EN BLANCO: imprimimos
+                                    // una por cada partido de la fase de grupos
+                                    // (2 por partido: una para cada capitán) en
+                                    // una sola ventana, para repartir a los
+                                    // capitanes ANTES de empezar a jugar.
+                                    if (partidos.length === 0) {
+                                        toast.error('Genera primero al menos un partido para imprimir la alineación')
+                                        return
+                                    }
+                                    const cat = categorias.find(c => c.id.toString() === categoriaId)?.nombre || ''
+                                    const ok = importarEImprimirAlineacionBatch({
+                                        torneo: { nombre: torneo.nombre },
+                                        categoria: cat,
+                                        cantidadPartidos: partidos.length,
+                                    })
+                                    if (!ok) toast.error('El navegador bloqueó la ventana de impresión')
+                                }}
+                                leadingIcon={<PrinterIcon className="h-4 w-4" />}
+                            >
+                                Imprimir alineaciones (en blanco)
+                            </Button>
+                        )}
                         {onOpenLlaves && (
                             <Button
                                 variant="primary"
@@ -494,13 +899,13 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                         >
                             {`Guardar cambios (${numeroBorradores})`}
                         </Button>
-                        {grupoFiltroId !== null && (
+                        {grupoModalId !== null && (
                             <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => setGrupoFiltroId(null)}
+                                onClick={() => setGrupoModalId(null)}
                             >
-                                Limpiar filtro de grupo
+                                Cerrar partidos del grupo
                             </Button>
                         )}
                         <span className="text-xs text-fg-muted ml-auto">
@@ -513,16 +918,18 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                     {!loading && (
                         <TablasClasificacion
                             clasificaciones={clasificaciones}
-                            onClickGrupo={(grupoId) =>
-                                setGrupoFiltroId(prev => prev === grupoId ? null : grupoId)
-                            }
-                            grupoFiltroId={grupoFiltroId}
+                            onClickGrupo={(grupoId) => setGrupoModalId(grupoId)}
+                            grupoFiltroId={grupoModalId}
+                            borradoresPorGrupo={borradoresPorGrupo}
+                            onResolverEmpate={(grupoId) => setGrupoResolucionId(grupoId)}
+                            onConfigurarAlineacion={(grupoId) => setWizardGrupoId(grupoId)}
+                            permiteAlineacion={torneo?.modalidad === 'DOBLES' || torneo?.modalidad === 'EQUIPOS'}
                         />
                     )}
 
                     {loading ? (
                         <div className="text-center py-16 text-fg-muted">Cargando partidos...</div>
-                    ) : gruposVisibles.length === 0 ? (
+                    ) : clasificaciones.length === 0 ? (
                         <div className="text-center py-20">
                             <TrophyIcon className="h-10 w-10 mx-auto text-fg-muted opacity-40" />
                             <h3 className="mt-3 font-semibold text-fg">Aún no hay partidos</h3>
@@ -530,65 +937,59 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                                 Genera los cruces después de completar los grupos.
                             </p>
                         </div>
+                    ) : partidos.length === 0 ? (
+                        <div className="text-center py-12">
+                            <p className="text-sm text-fg-muted">
+                                Pulsa <b>Generar partidos</b> para crear los cruces. Luego toca una
+                                tabla de clasificación para registrar resultados.
+                            </p>
+                        </div>
                     ) : (
-                        <div className="space-y-4">
-                            {gruposVisibles.map(grupo => (
-                                <section key={grupo.id} className="card-flush overflow-hidden">
-                                    <div className="px-4 py-2.5 bg-subtle border-b border-line text-xs font-bold text-fg-muted uppercase tracking-wider flex items-center justify-between">
-                                        <span>Grupo {grupo.numero}</span>
-                                        <span className="text-fg-muted normal-case font-normal">
-                                            {grupo.partidos.length} cruce{grupo.partidos.length === 1 ? '' : 's'}
-                                        </span>
-                                    </div>
-                                    <div className="divide-y divide-line">
-                                        {grupo.partidos.map(partido => {
-                                            const finalizado = partido.estado === 'FINALIZADO'
-                                            const tieneBorrador = !!borradores[partido.id]
-                                            return (
-                                                <button
-                                                    key={partido.id}
-                                                    onClick={() => abrirResultado(partido)}
-                                                    className="w-full p-3.5 text-left hover:bg-subtle transition-colors flex flex-col sm:flex-row sm:items-center gap-2"
-                                                >
-                                                    <span className="chip w-7 text-center">#{partido.orden}</span>
-                                                    <span className="flex-1 font-semibold text-fg truncate">
-                                                        {nombreParticipante(partido.participante_local)}
-                                                    </span>
-                                                    <span className="font-mono font-bold text-fg text-sm">
-                                                        {finalizado
-                                                            ? `${partido.sets_local} : ${partido.sets_visitante}`
-                                                            : <span className="text-fg-muted font-normal">vs</span>}
-                                                    </span>
-                                                    <span className="flex-1 font-semibold text-fg truncate">
-                                                        {nombreParticipante(partido.participante_visitante)}
-                                                    </span>
-                                                    <span className="text-xs text-fg-muted hidden md:inline">
-                                                        Árbitro: <b className="text-fg">{partido.arbitro?.nombre || 'Asignar'}</b>
-                                                    </span>
-                                                    {tieneBorrador ? (
-                                                        <Badge variant="warning">
-                                                            <span className="inline-flex items-center gap-1">
-                                                                <ExclamationTriangleIcon className="h-3 w-3" />
-                                                                Borrador
-                                                            </span>
-                                                        </Badge>
-                                                    ) : (
-                                                        <Badge variant={finalizado ? 'success' : 'warning'}>
-                                                            {finalizado
-                                                                ? 'Finalizado'
-                                                                : torneo.modalidad === 'EQUIPOS' ? 'Serie de equipo' : 'Registrar'}
-                                                        </Badge>
-                                                    )}
-                                                </button>
-                                            )
-                                        })}
-                                    </div>
-                                </section>
-                            ))}
+                        <div className="text-center py-12">
+                            <p className="text-sm text-fg-muted">
+                                Toca una tabla de clasificación para ver y registrar los partidos
+                                de ese grupo.
+                            </p>
                         </div>
                     )}
                 </div>
             </Modal>
+
+            {/* Modal por grupo: muestra los partidos de un grupo concreto y
+                permite navegar entre grupos con flechas. Al tocar un partido,
+                se abre el modal de resultado por encima; al cerrarlo, el
+                modal del grupo reaparece automáticamente. */}
+            {grupoModalId !== null && partidoResultadoId === null && (() => {
+                const indiceGrupo = partidosPorGrupo.findIndex(g => g.id === grupoModalId)
+                const grupo = indiceGrupo >= 0 ? partidosPorGrupo[indiceGrupo] : null
+                if (!grupo) return null
+                return (
+                    <PartidosGrupoModal
+                        isOpen
+                        onClose={() => setGrupoModalId(null)}
+                        grupo={grupo}
+                        borradores={borradores}
+                        indiceGrupo={indiceGrupo}
+                        totalGrupos={partidosPorGrupo.length}
+                        onPrevGrupo={() => {
+                            const anterior = partidosPorGrupo[indiceGrupo - 1]
+                            if (anterior) setGrupoModalId(anterior.id)
+                        }}
+                        onNextGrupo={() => {
+                            const siguiente = partidosPorGrupo[indiceGrupo + 1]
+                            if (siguiente) setGrupoModalId(siguiente.id)
+                        }}
+                        onSelectPartido={(partidoId) => {
+                            // Abrimos el modal de resultado SIN cerrar el
+                            // modal del grupo: al volver del resultado, el
+                            // usuario sigue viendo los partidos del mismo
+                            // grupo. Recordamos el grupo activo en un ref
+                            // para no perder el contexto al remontar.
+                            setPartidoResultadoId(partidoId)
+                        }}
+                    />
+                )
+            })()}
 
             {/* Modal "Registrar resultado" — componente separado para mantener
                 el código de sets/al navegacion aislado. */}
@@ -606,6 +1007,26 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                     }}
                 />
             )}
+
+            {/* Modal "Resolver empate" — permite reordenar manualmente los
+                participantes que el sistema no puede desempatar. Solo aparece
+                para el grupo con `pendientes_manual`. */}
+            {grupoResolucionId !== null && (() => {
+                const grupo = clasificaciones.find(g => g.grupoId === grupoResolucionId)
+                if (!grupo || !torneo) return null
+                return (
+                    <ResolverEmpateModal
+                        isOpen
+                        onClose={() => setGrupoResolucionId(null)}
+                        torneoId={torneo.id}
+                        grupoId={grupo.grupoId}
+                        grupoNumero={grupo.numero_grupo}
+                        pendientesIds={grupo.pendientes_manual ?? []}
+                        posiciones={grupo.posiciones}
+                        onGuardado={() => cargar()}
+                    />
+                )
+            })()}
 
             {/* Modal de previsualización de generación con checkboxes */}
             {modalGeneracion && (
@@ -670,6 +1091,28 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                         ))}
                     </div>
                 </Modal>
+            )}
+
+            {/* Wizard ABC/XYZ por GRUPO. Se monta encima del modal de
+                partidos cuando el operador hace clic en "Configurar
+                alineación" en la cabecera de la clasificación del grupo.
+                Al cerrarlo se recarga la lista para reflejar las
+                alineaciones guardadas en todos los partidos del grupo. */}
+            {grupoWizard && torneo && (
+                <EncuentroEquiposWizardModal
+                    isOpen
+                    onClose={() => {
+                        setWizardGrupoId(null)
+                        cargar()
+                    }}
+                    torneo={{ id: torneo.id, nombre: torneo.nombre }}
+                    categoria={categorias.find(c => c.id.toString() === categoriaId)?.nombre || ''}
+                    grupoId={grupoWizard.grupoId}
+                    equipos={grupoWizard.equipos}
+                    partidos={grupoWizard.partidos}
+                    modalidad={torneo.modalidad === 'EQUIPOS' ? 'EQUIPOS' : 'DOBLES'}
+                    onGuardado={() => cargar()}
+                />
             )}
         </>
     )

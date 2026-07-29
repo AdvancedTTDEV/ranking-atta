@@ -1,5 +1,6 @@
 import prisma from '@/lib/prisma'
 import { NextResponse } from 'next/server'
+import { crucesRoundRobin } from '@/lib/seed'
 
 interface RouteParams { params: Promise<{ id: string }> }
 
@@ -51,26 +52,26 @@ export async function GET(request: Request, { params }: RouteParams) {
         }[] = []
 
         for (const grupo of grupos) {
-            for (let localIndex = 0; localIndex < grupo.participantes.length - 1; localIndex++) {
-                for (let visitanteIndex = localIndex + 1; visitanteIndex < grupo.participantes.length; visitanteIndex++) {
-                    const local = grupo.participantes[localIndex].torneo_participantes
-                    const visitante = grupo.participantes[visitanteIndex].torneo_participantes
-                    const idsEnJuego = new Set([
-                        ...local.miembros.map(m => m.jugador_id),
-                        ...visitante.miembros.map(m => m.jugador_id),
-                    ])
-                    const arbitrosDisponibles = grupo.participantes
-                        .flatMap(p => p.torneo_participantes.miembros.map(m => m.jugadores))
-                        .filter(j => !idsEnJuego.has(j.id))
-                    cruces.push({
-                        grupo_id: grupo.id,
-                        participante_local_id: local.id,
-                        participante_visitante_id: visitante.id,
-                        arbitro_jugador_id: arbitrosDisponibles[0]?.id ?? null,
-                        local: nombreParticipante(local),
-                        visitante: nombreParticipante(visitante),
-                    })
-                }
+            const ids = grupo.participantes.map(p => p.torneo_participantes.id)
+            const ordenCruces = crucesRoundRobin(ids)
+            for (const [localId, visitanteId] of ordenCruces) {
+                const local = grupo.participantes.find(p => p.torneo_participantes.id === localId)!.torneo_participantes
+                const visitante = grupo.participantes.find(p => p.torneo_participantes.id === visitanteId)!.torneo_participantes
+                const idsEnJuego = new Set([
+                    ...local.miembros.map(m => m.jugador_id),
+                    ...visitante.miembros.map(m => m.jugador_id),
+                ])
+                const arbitrosDisponibles = grupo.participantes
+                    .flatMap(p => p.torneo_participantes.miembros.map(m => m.jugadores))
+                    .filter(j => !idsEnJuego.has(j.id))
+                cruces.push({
+                    grupo_id: grupo.id,
+                    participante_local_id: local.id,
+                    participante_visitante_id: visitante.id,
+                    arbitro_jugador_id: arbitrosDisponibles[0]?.id ?? null,
+                    local: nombreParticipante(local),
+                    visitante: nombreParticipante(visitante),
+                })
             }
         }
 

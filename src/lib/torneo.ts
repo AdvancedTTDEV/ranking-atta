@@ -64,3 +64,17 @@ const ORDEN_NOMBRE: Record<string, number> = {
 function ordenCategoria(nombre: string): number {
     return ORDEN_NOMBRE[nombre] ?? 99
 }
+
+/**
+ * Formato estándar para mostrar un jugador con su ID numérico (PK de la
+ * BD). Es la primera vez que el ID se exhibe al usuario: lo usamos para
+ * que el organizador pueda copiar el número a mano en las hojas de
+ * partido y alineación sin tener que escribir el nombre completo.
+ *
+ *   nombreConId({ id: 145, nombre: 'Juan Pérez' }) → "145 — Juan Pérez"
+ *   nombreConId(null)                              → "—"
+ */
+export function nombreConId(jugador: { id: number; nombre: string } | null | undefined): string {
+    if (!jugador) return '—'
+    return `${jugador.id} — ${jugador.nombre}`
+}

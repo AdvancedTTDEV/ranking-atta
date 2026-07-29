@@ -15,7 +15,10 @@ export async function GET(request: Request) {
       prisma.torneos.findMany({
         ...(all ? {} : { skip, take: limit }),
         orderBy: {
-          fecha: 'desc' // 🔥 IMPORTANTE (más recientes primero)
+          id: 'desc' // 🔥 más recientes primero (por id de inserción,
+          //             ya que `fecha` es la fecha del torneo, no la
+          //             de creación, y varios torneos creados el mismo
+          //             día empatan y MySQL no garantiza el orden)
         },
         include: {
           torneo_categorias: {
