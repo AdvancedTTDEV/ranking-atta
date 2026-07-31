@@ -1,0 +1,3 @@
+-- Marked as already applied via `prisma migrate resolve --applied`.
+-- Original migration file was not committed; recreate as no-op so Prisma
+-- can register it and stop retrying it on every `migrate deploy`.
