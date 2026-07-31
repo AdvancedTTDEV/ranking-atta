@@ -1,12 +1,24 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, ReactNode } from 'react'
+import {
+    ChevronUpIcon,
+    ChevronDownIcon,
+    ChevronLeftIcon,
+    ChevronRightIcon,
+    InboxIcon,
+} from '@heroicons/react/24/outline'
 
 interface Column {
     header: string
     accessor: string
-    render?: (value: any, row: any) => React.ReactNode
+    /** Unique React key for this column. Falls back to `accessor`.
+     *  Required when two columns share the same `accessor` (e.g. a read-only
+     *  "ID" column and a separate "Acciones" column that also reads `id`). */
+    key?: string
+    render?: (value: any, row: any) => ReactNode
     sortable?: boolean
+    className?: string
 }
 
 interface DataTableProps {
@@ -17,26 +29,40 @@ interface DataTableProps {
     itemsPerPage: number
     totalItems: number
     onPageChange: (page: number) => void
-    onItemsPerPageChange: (items: number) => void
+    onItemsPerPageChange?: (items: number) => void
     isLoading?: boolean
+    /** Rows shown in the loading skeleton. Default: 5. */
+    skeletonRows?: number
+    /** Fixed key extractor so React doesn't reuse rows between page changes. */
+    rowKey?: (row: any, index: number) => string | number
+    /** Optional element rendered above the table (filters, search, etc.). */
+    toolbar?: ReactNode
+    /** Optional element rendered below the table (totals, etc.). */
+    footer?: ReactNode
+    /** Hide the items-per-page selector. */
+    hideItemsPerPage?: boolean
+    emptyMessage?: string
 }
 
 export default function DataTable({
-                                      columns,
-                                      data,
-                                      onRowClick,
-                                      currentPage,
-                                      itemsPerPage,
-                                      totalItems,
-                                      onPageChange,
-                                      onItemsPerPageChange,
-                                      isLoading = false
-                                  }: DataTableProps) {
+    columns,
+    data,
+    onRowClick,
+    currentPage,
+    itemsPerPage,
+    totalItems,
+    onPageChange,
+    onItemsPerPageChange,
+    isLoading = false,
+    skeletonRows = 5,
+    rowKey,
+    toolbar,
+    footer,
+    hideItemsPerPage = false,
+    emptyMessage = 'No se encontraron registros',
+}: DataTableProps) {
     const [sortColumn, setSortColumn] = useState<string | null>(null)
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
-
-    const isCompact = itemsPerPage < 15 // activa modo compacto por cantidad
-    const compactClasses = isCompact ? 'text-xs' : 'text-sm'
 
     const sortedData = useMemo(() => {
         if (!sortColumn) return data
@@ -47,139 +73,162 @@ export default function DataTable({
                 return sortDirection === 'asc' ? valA - valB : valB - valA
             }
             return sortDirection === 'asc'
-                ? String(valA).localeCompare(String(valB))
-                : String(valB).localeCompare(String(valA))
+                ? String(valA ?? '').localeCompare(String(valB ?? ''))
+                : String(valB ?? '').localeCompare(String(valA ?? ''))
         })
         return sorted
     }, [data, sortColumn, sortDirection])
 
-    const handleHeaderClick = (accessor: string) => {
-        if (sortColumn === accessor) {
-            setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'))
+    const handleHeaderClick = (column: Column) => {
+        if (!column.sortable) return
+        if (sortColumn === column.accessor) {
+            setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))
         } else {
-            setSortColumn(accessor)
+            setSortColumn(column.accessor)
             setSortDirection('asc')
         }
     }
 
-    const totalPages = Math.ceil(totalItems / itemsPerPage)
-
-    const handleItemsPerPageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        onItemsPerPageChange(Number(e.target.value))
-    }
+    const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage))
+    const startIndex = totalItems === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1
+    const endIndex = Math.min(itemsPerPage * currentPage, totalItems)
 
     return (
-        <div className={`overflow-x-auto ${compactClasses} sm:text-sm`}>
-            <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                <tr>
-                    {columns.map((column, index) => (
-                        <th
-                            key={index}
-                            scope="col"
-                            onClick={() => column.sortable && handleHeaderClick(column.accessor)}
-                            className={`${isCompact ? 'px-2 py-1' : 'px-4 py-2'} text-left font-medium text-gray-500 uppercase tracking-wider ${
-                                column.sortable ? 'cursor-pointer hover:text-gray-700' : ''
-                            }`}
-                        >
-                <span className="flex items-center gap-1">
-                  {column.header}
-                    {sortColumn === column.accessor && (
-                        <span>{sortDirection === 'asc' ? '⬆️' : '⬇️'}</span>
-                    )}
-                </span>
-                        </th>
-                    ))}
-                </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                {isLoading ? (
-                    <tr>
-                        <td colSpan={columns.length} className={`${isCompact ? 'px-2 py-2' : 'px-4 py-4'} text-center`}>
-                            <div className="flex justify-center">
-                                <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500"></div>
-                            </div>
-                        </td>
-                    </tr>
-                ) : sortedData.length === 0 ? (
-                    <tr>
-                        <td colSpan={columns.length} className={`${isCompact ? 'px-2 py-2' : 'px-4 py-4'} text-center`}>
-                            No se encontraron registros
-                        </td>
-                    </tr>
-                ) : (
-                    sortedData.map((row, rowIndex) => (
-                        <tr
-                            key={rowIndex}
-                            onClick={() => onRowClick && onRowClick(row)}
-                            className={`${onRowClick ? 'cursor-pointer hover:bg-gray-50' : ''}`}
-                        >
-                            {columns.map((column, colIndex) => (
-                                <td key={colIndex} className={`${isCompact ? 'px-2 py-1' : 'px-4 py-2'} whitespace-nowrap`}>
-                                    {column.render ? column.render(row[column.accessor], row) : row[column.accessor]}
-                                </td>
-                            ))}
+        <div className="space-y-3">
+            {toolbar && <div>{toolbar}</div>}
+
+            <div className="overflow-x-auto scrollbar-thin -mx-1">
+                <table className="table-base">
+                    <thead>
+                        <tr>
+                            {columns.map((column) => {
+                                const isSorted = sortColumn === column.accessor
+                                const reactKey = column.key ?? column.accessor
+                                return (
+                                    <th
+                                        key={reactKey}
+                                        scope="col"
+                                        onClick={() => handleHeaderClick(column)}
+                                        className={`${column.className ?? ''} ${
+                                            column.sortable ? 'cursor-pointer select-none hover:text-fg' : ''
+                                        }`}
+                                    >
+                                        <span className="inline-flex items-center gap-1">
+                                            {column.header}
+                                            {isSorted &&
+                                                (sortDirection === 'asc' ? (
+                                                    <ChevronUpIcon className="h-3.5 w-3.5" />
+                                                ) : (
+                                                    <ChevronDownIcon className="h-3.5 w-3.5" />
+                                                ))}
+                                        </span>
+                                    </th>
+                                )
+                            })}
                         </tr>
-                    ))
-                )}
-                </tbody>
-            </table>
-
-            {/* Paginación */}
-            <div className="flex flex-col items-center mt-4 space-y-3">
-                <div>
-    <span className="text-sm text-gray-700">
-      Mostrando {Math.min(itemsPerPage * (currentPage - 1) + 1, totalItems)}-
-        {Math.min(itemsPerPage * currentPage, totalItems)} de {totalItems} registros
-    </span>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                    <span className="text-sm text-gray-700">Filas por página:</span>
-                    <select
-                        value={itemsPerPage}
-                        onChange={handleItemsPerPageChange}
-                        className="border rounded px-2 py-1 text-sm"
-                        disabled={isLoading}
-                    >
-                        {[5, 10, 25, 50].map(size => (
-                            <option key={size} value={size}>{size}</option>
-                        ))}
-                    </select>
-                </div>
-
-                {/* Botones centrados */}
-                <div className="flex items-center justify-center space-x-1 text-sm">
-                    <button
-                        onClick={() => onPageChange(currentPage - 1)}
-                        disabled={currentPage === 1 || isLoading}
-                        className={`px-3 py-1 rounded-l border ${
-                            currentPage === 1 || isLoading
-                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                : 'bg-white hover:bg-gray-100'
-                        }`}
-                    >
-                        Anterior
-                    </button>
-
-                    <span className="px-3 py-1 border-t border-b">
-      {currentPage} / {totalPages}
-    </span>
-
-                    <button
-                        onClick={() => onPageChange(currentPage + 1)}
-                        disabled={currentPage === totalPages || isLoading}
-                        className={`px-3 py-1 rounded-r border ${
-                            currentPage === totalPages || isLoading
-                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                : 'bg-white hover:bg-gray-100'
-                        }`}
-                    >
-                        Siguiente
-                    </button>
-                </div>
+                    </thead>
+                    <tbody>
+                        {isLoading ? (
+                            Array.from({ length: skeletonRows }).map((_, i) => (
+                                <tr key={`skeleton-${i}`} className="animate-pulse-soft">
+                                    {columns.map((column) => (
+                                        <td
+                                            key={column.key ?? column.accessor}
+                                            className={column.className}
+                                        >
+                                            <div className="h-3 w-3/4 rounded bg-subtle" />
+                                        </td>
+                                    ))}
+                                </tr>
+                            ))
+                        ) : sortedData.length === 0 ? (
+                            <tr>
+                                <td colSpan={columns.length} className="py-12 text-center">
+                                    <div className="mx-auto flex max-w-xs flex-col items-center gap-2 text-fg-muted">
+                                        <InboxIcon className="h-8 w-8 opacity-50" />
+                                        <p className="text-sm">{emptyMessage}</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        ) : (
+                            sortedData.map((row, rowIndex) => (
+                                <tr
+                                    key={rowKey ? rowKey(row, rowIndex) : rowIndex}
+                                    onClick={() => onRowClick?.(row)}
+                                    className={onRowClick ? 'cursor-pointer' : ''}
+                                >
+                                    {columns.map((column) => (
+                                        <td
+                                            key={column.key ?? column.accessor}
+                                            className={column.className}
+                                        >
+                                            {column.render
+                                                ? column.render(row[column.accessor], row)
+                                                : row[column.accessor]}
+                                        </td>
+                                    ))}
+                                </tr>
+                            ))
+                        )}
+                    </tbody>
+                </table>
             </div>
 
+            {footer}
+
+            {/* Paginación */}
+            {totalItems > 0 && (
+                <div className="flex flex-col-reverse items-stretch gap-3 border-t border-line pt-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-fg-muted">
+                        Mostrando <span className="font-medium text-fg">{startIndex}–{endIndex}</span> de{' '}
+                        <span className="font-medium text-fg">{totalItems}</span>
+                    </p>
+
+                    <div className="flex items-center gap-3">
+                        {!hideItemsPerPage && onItemsPerPageChange && (
+                            <label className="flex items-center gap-2 text-xs text-fg-muted">
+                                <span>Por página</span>
+                                <select
+                                    value={itemsPerPage}
+                                    onChange={(e) => onItemsPerPageChange(Number(e.target.value))}
+                                    disabled={isLoading}
+                                    className="select-base py-1 text-xs w-auto"
+                                >
+                                    {[5, 10, 25, 50].map((size) => (
+                                        <option key={size} value={size}>
+                                            {size}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                        )}
+
+                        <div className="flex items-center gap-1">
+                            <button
+                                type="button"
+                                onClick={() => onPageChange(currentPage - 1)}
+                                disabled={currentPage === 1 || isLoading}
+                                className="btn btn-ghost btn-icon"
+                                aria-label="Página anterior"
+                            >
+                                <ChevronLeftIcon className="h-4 w-4" />
+                            </button>
+                            <span className="px-2 text-xs text-fg-muted">
+                                <span className="font-medium text-fg">{currentPage}</span> / {totalPages}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => onPageChange(currentPage + 1)}
+                                disabled={currentPage === totalPages || isLoading}
+                                className="btn btn-ghost btn-icon"
+                                aria-label="Página siguiente"
+                            >
+                                <ChevronRightIcon className="h-4 w-4" />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

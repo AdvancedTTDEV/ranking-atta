@@ -1,49 +1,93 @@
-// components/ui/Modal.tsx
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, ReactNode } from 'react'
+import { XMarkIcon } from '@heroicons/react/24/outline'
+
+type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full'
 
 interface ModalProps {
     isOpen: boolean
     onClose: () => void
     title: string
-    children: React.ReactNode
+    description?: string
+    children: ReactNode
+    size?: ModalSize
+    /** Optional content rendered in the footer (typically action buttons). */
+    footer?: ReactNode
 }
 
-export default function Modal({ isOpen, onClose, title, children }: ModalProps) {
+const sizeClasses: Record<ModalSize, string> = {
+    sm: 'max-w-sm',
+    md: 'max-w-md',
+    lg: 'max-w-lg',
+    xl: 'max-w-2xl',
+    '2xl': 'max-w-4xl',
+    full: 'max-w-[96vw]',
+}
+
+export default function Modal({
+    isOpen,
+    onClose,
+    title,
+    description,
+    children,
+    size = 'lg',
+    footer,
+}: ModalProps) {
     useEffect(() => {
-        if (isOpen) {
-            document.body.style.overflow = 'hidden'
-        } else {
-            document.body.style.overflow = 'auto'
+        if (!isOpen) return
+        const previousOverflow = document.body.style.overflow
+        document.body.style.overflow = 'hidden'
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') onClose()
         }
+        window.addEventListener('keydown', onKeyDown)
 
         return () => {
-            document.body.style.overflow = 'auto'
+            document.body.style.overflow = previousOverflow
+            window.removeEventListener('keydown', onKeyDown)
         }
-    }, [isOpen])
+    }, [isOpen, onClose])
 
     if (!isOpen) return null
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm bg-black/80">
-
         <div
-                className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto"
+            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in"
+            onClick={onClose}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modal-title"
+        >
+            <div
+                className={`card-elevated w-full ${sizeClasses[size]} max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col animate-scale-in`}
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="border-b p-4 flex justify-between items-center">
-                    <h3 className="text-xl font-semibold">{title}</h3>
+                <div className="card-header-row flex-shrink-0">
+                    <div className="min-w-0">
+                        <h3 id="modal-title" className="card-title text-lg">
+                            {title}
+                        </h3>
+                        {description && <p className="card-subtitle mt-1">{description}</p>}
+                    </div>
                     <button
+                        type="button"
                         onClick={onClose}
-                        className="text-gray-500 hover:text-gray-700"
+                        aria-label="Cerrar"
+                        className="btn btn-ghost btn-icon flex-shrink-0"
                     >
-                        ✕
+                        <XMarkIcon className="h-5 w-5" />
                     </button>
                 </div>
-                <div className="p-6">
+                <div className="card-body overflow-y-auto scrollbar-thin flex-1">
                     {children}
                 </div>
+                {footer && (
+                    <div className="flex-shrink-0 border-t border-line px-5 py-3 flex justify-end gap-2 bg-surface-2">
+                        {footer}
+                    </div>
+                )}
             </div>
         </div>
     )

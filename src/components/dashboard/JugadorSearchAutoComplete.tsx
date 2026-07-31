@@ -1,6 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { MagnifyingGlassIcon } from '@heroicons/react/24/outline';
+import { Input } from '@/components/ui/Input';
+import { Badge } from '@/components/ui/Badge';
 
 type Jugador = {
     id: number;
@@ -49,46 +52,51 @@ export default function JugadorSearchAutocomplete({
 
     return (
         <div className="w-full max-w-md">
-            <input
+            <Input
                 type="text"
                 placeholder="Buscar jugador..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring focus:ring-blue-200"
+                leadingIcon={<MagnifyingGlassIcon className="h-4 w-4" />}
             />
 
             {/* Loader */}
             {loading && (
-                <div className="mt-2 text-gray-500 text-sm">Buscando...</div>
+                <div className="mt-2 text-fg-muted text-sm inline-flex items-center gap-2">
+                    <span className="inline-block h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                    Buscando...
+                </div>
             )}
 
             {/* Lista de resultados */}
             {results.length > 0 && (
-                <div className="mt-2 space-y-2">
+                <ul className="mt-2 space-y-1.5">
                     {results.map((jugador) => (
-                        <div
-                            key={jugador.id}
-                            className="p-3 border rounded-lg shadow bg-white hover:bg-gray-50 cursor-pointer"
-                            onClick={() => {
-                                onSelect?.(jugador);
-                                setQuery(jugador.nombre); // opcional: rellena el input
-                            }}
-                        >
-                            <h3 className="font-bold text-base">{jugador.nombre}</h3>
-                            <p className="text-sm text-gray-600">
-                                ELO: <span className="font-medium">{jugador.elo}</span>
-                            </p>
-                            <p className="text-sm text-gray-600">
-                                Club: {jugador.clubes?.nombre || 'Sin club'}
-                            </p>
-                        </div>
+                        <li key={jugador.id}>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    onSelect?.(jugador);
+                                    setQuery(jugador.nombre); // opcional: rellena el input
+                                }}
+                                className="w-full text-left card-flush p-3 hover:bg-subtle transition-colors"
+                            >
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="font-semibold text-fg truncate">{jugador.nombre}</span>
+                                    <Badge variant="brand">{jugador.elo}</Badge>
+                                </div>
+                                <p className="text-xs text-fg-muted mt-1">
+                                    Club: {jugador.clubes?.nombre || 'Sin club'}
+                                </p>
+                            </button>
+                        </li>
                     ))}
-                </div>
+                </ul>
             )}
 
             {/* No encontrado */}
             {query.length >= 2 && !loading && results.length === 0 && (
-                <div className="mt-2 text-gray-500 text-sm">No se encontraron jugadores</div>
+                <p className="mt-2 text-fg-muted text-sm">No se encontraron jugadores</p>
             )}
         </div>
     );

@@ -21,6 +21,7 @@ export async function GET(request: Request) {
         select: {
           id: true,
           nombre: true,
+          categoria_id: true,
           categorias: true,
           elo: true
         },

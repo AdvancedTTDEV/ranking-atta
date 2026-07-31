@@ -2,165 +2,204 @@
 import { useState, useEffect, FormEvent } from 'react'
 import { toast } from 'react-hot-toast'
 import { format } from 'date-fns'
+import { Input } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
+import { Button } from '@/components/ui/Button'
 
 interface Categoria {
-  id: number;
-  nombre: string;
+    id: number
+    nombre: string
 }
 
 interface TorneoFormProps {
-  onSuccessAction: () => void;
-  onCancelAction: () => void;
+    onSuccessAction: () => void
+    onCancelAction: () => void
 }
 
-export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFormProps) { // ✅ Nombre corregido
-  const [nombre, setNombre] = useState('')
-  const [fecha, setFecha] = useState(format(new Date(), 'yyyy-MM-dd'))
-  const [ubicacion, setUbicacion] = useState('')
-  const [categoriasSeleccionadas, setCategoriasSeleccionadas] = useState<number[]>([])
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [categorias, setCategorias] = useState<Categoria[]>([]) // ✅ Mover dentro del componente
+export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFormProps) {
+    const [nombre, setNombre] = useState('')
+    const [fecha, setFecha] = useState(format(new Date(), 'yyyy-MM-dd'))
+    const [ubicacion, setUbicacion] = useState('')
+    const [modalidad, setModalidad] = useState('INDIVIDUAL')
+    const [categoriasSeleccionadas, setCategoriasSeleccionadas] = useState<number[]>([])
+    const [isSubmitting, setIsSubmitting] = useState(false)
+    const [categorias, setCategorias] = useState<Categoria[]>([])
+    const [abierto, setAbierto] = useState(false)
 
-  useEffect(() => {
-    const fetchCategorias = async () => {
-      try {
-        const res = await fetch('/api/categorias')
-        if (!res.ok) throw new Error('Error al cargar categorías')
-        const data = await res.json()
-        setCategorias(data)
-      } catch (error) {
-        toast.error('Error al cargar categorías')
-        console.error(error)
-      }
+    useEffect(() => {
+        const fetchCategorias = async () => {
+            try {
+                const res = await fetch('/api/categorias')
+                if (!res.ok) throw new Error('Error al cargar categorías')
+                const data = await res.json()
+                // Ocultamos "primera" del selector: los torneos abiertos
+                // (que admiten a cualquier jugador) se crean con el toggle
+                // "Abierto" en lugar de elegir la categoría primera.
+                setCategorias(
+                    Array.isArray(data)
+                        ? data.filter((c: Categoria) => c.nombre !== 'primera')
+                        : []
+                )
+            } catch (error) {
+                toast.error('Error al cargar categorías')
+                console.error(error)
+            }
+        }
+        fetchCategorias()
+    }, [])
+
+    const handleCheckboxChange = (categoriaId: number) => {
+        setCategoriasSeleccionadas((prev) =>
+            prev.includes(categoriaId)
+                ? prev.filter((id) => id !== categoriaId)
+                : [...prev, categoriaId]
+        )
     }
-    
-    fetchCategorias()
-  }, [])
-  
-  const handleCheckboxChange = (categoriaId: number) => {
-    setCategoriasSeleccionadas(prev => 
-      prev.includes(categoriaId)
-        ? prev.filter(id => id !== categoriaId)
-        : [...prev, categoriaId]
-    )
-  }
-  
-const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    setIsSubmitting(true)
-    
-    const torneoData = {
-      nombre,
-      fecha,
-      ubicacion,
-      categorias: categoriasSeleccionadas
+
+    const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+        e.preventDefault()
+        setIsSubmitting(true)
+        // Para DOBLES/EQUIPOS y para INDIVIDUAL marcado como "abierto" el
+        // backend asigna todas las categorías. Para INDIVIDUAL no abierto
+        // respetamos la selección manual del formulario.
+        const categoriasAEnviar = (modalidad === 'INDIVIDUAL' && !abierto) ? categoriasSeleccionadas : []
+        if (modalidad === 'INDIVIDUAL' && !abierto && categoriasAEnviar.length === 0) {
+            toast.error('Selecciona al menos una categoría')
+            setIsSubmitting(false)
+            return
+        }
+        const torneoData = {
+            nombre,
+            fecha,
+            ubicacion,
+            modalidad,
+            abierto,
+            categorias: categoriasAEnviar,
+        }
+        try {
+            const response = await fetch('/api/torneos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(torneoData),
+            })
+            if (response.ok) {
+                toast.success('Torneo creado exitosamente')
+                onSuccessAction()
+            } else {
+                const errorData = await response.json()
+                toast.error(errorData.message || 'Error al crear torneo')
+            }
+        } catch {
+            toast.error('Error de conexión')
+        } finally {
+            setIsSubmitting(false)
+        }
     }
-    
-    try {
-      const response = await fetch('/api/torneos', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(torneoData)
-      })
-      
-      if (response.ok) {
-        toast.success('Torneo creado exitosamente')
-        onSuccessAction()
-      } else {
-        const errorData = await response.json()
-        toast.error(errorData.message || 'Error al crear torneo')
-      }
-    } catch (error) {
-      toast.error('Error de conexión')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-  
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div>
-        <label htmlFor="nombre" className="block text-sm font-medium text-gray-700">
-          Nombre del Torneo
-        </label>
-        <input
-          type="text"
-          id="nombre"
-          value={nombre}
-          onChange={(e) => setNombre(e.target.value)}
-          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-          required
-        />
-      </div>
-      
-      <div>
-        <label htmlFor="fecha" className="block text-sm font-medium text-gray-700">
-          Fecha
-        </label>
-        <input
-          type="date"
-          id="fecha"
-          value={fecha}
-          onChange={(e) => setFecha(e.target.value)}
-          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-          required
-        />
-      </div>
-      
-      <div>
-        <label htmlFor="ubicacion" className="block text-sm font-medium text-gray-700">
-          Ubicación
-        </label>
-        <input
-          type="text"
-          id="ubicacion"
-          value={ubicacion}
-          onChange={(e) => setUbicacion(e.target.value)}
-          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-        />
-      </div>
-      
-      <div>
-        <label className="block text-sm font-medium text-gray-700">
-          Categorías
-        </label>
-        <div className="mt-2 space-y-2">
-          {categorias.map(categoria => (
-            <div key={categoria.id} className="flex items-center">
-              <input
-                type="checkbox"
-                id={`cat-${categoria.id}`}
-                checked={categoriasSeleccionadas.includes(categoria.id)}
-                onChange={() => handleCheckboxChange(categoria.id)}
-                className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-              />
-              <label htmlFor={`cat-${categoria.id}`} className="ml-2 text-sm text-gray-700">
-                {categoria.nombre}
-              </label>
+
+    return (
+        <form onSubmit={handleSubmit} className="space-y-5">
+            <Input
+                label="Nombre del Torneo"
+                value={nombre}
+                onChange={(e) => setNombre(e.target.value)}
+                placeholder="Ej. Abierto de Primavera 2025"
+                required
+                autoFocus
+            />
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Select
+                    label="Modalidad"
+                    value={modalidad}
+                    onChange={(e) => setModalidad(e.target.value)}
+                >
+                    <option value="INDIVIDUAL">Individual</option>
+                    <option value="DOBLES">Dobles</option>
+                    <option value="EQUIPOS">Por equipos</option>
+                </Select>
+                <Input
+                    label="Fecha"
+                    type="date"
+                    value={fecha}
+                    onChange={(e) => setFecha(e.target.value)}
+                    required
+                />
             </div>
-          ))}
-        </div>
-      </div>
-      
-      <div className="flex justify-end space-x-2">
-        <button
-          type="button"
-          onClick={onCancelAction}
-          className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
-          disabled={isSubmitting}
-        >
-          Cancelar
-        </button>
-        <button
-          type="submit"
-          className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700"
-          disabled={isSubmitting}
-        >
-          {isSubmitting ? 'Guardando...' : 'Guardar'}
-        </button>
-      </div>
-    </form>
-  )
+
+            <Input
+                label="Ubicación"
+                value={ubicacion}
+                onChange={(e) => setUbicacion(e.target.value)}
+                placeholder="Ej. Polideportivo Central"
+            />
+
+            <div>
+                <label className="label">Categorías</label>
+                {modalidad === 'INDIVIDUAL' ? (
+                    categorias.length === 0 ? (
+                        <p className="text-sm text-fg-muted">Cargando categorías…</p>
+                    ) : (
+                        <div className="space-y-3">
+                            <label className="flex items-center gap-2 px-3 py-2 rounded-md border border-line cursor-pointer hover:border-line-strong transition-colors">
+                                <input
+                                    type="checkbox"
+                                    checked={abierto}
+                                    onChange={e => setAbierto(e.target.checked)}
+                                    className="h-4 w-4 rounded border-line-strong text-brand focus:ring-brand"
+                                />
+                                <span className="text-sm font-semibold">Abierto</span>
+                                <span className="text-xs text-fg-muted">
+                                    — cualquier jugador puede inscribirse sin importar su categoría
+                                </span>
+                            </label>
+                            {!abierto && (
+                                <div className="grid grid-cols-2 gap-2">
+                                    {categorias.map((categoria) => {
+                                        const checked = categoriasSeleccionadas.includes(categoria.id)
+                                        return (
+                                            <label
+                                                key={categoria.id}
+                                                className={`flex items-center gap-2 px-3 py-2 rounded-md border cursor-pointer transition-colors ${
+                                                    checked
+                                                        ? 'border-brand bg-brand-soft text-fg'
+                                                        : 'border-line text-fg-muted hover:border-line-strong hover:text-fg'
+                                                }`}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={() => handleCheckboxChange(categoria.id)}
+                                                    className="h-4 w-4 rounded border-line-strong text-brand focus:ring-brand"
+                                                />
+                                                <span className="text-sm">{categoria.nombre}</span>
+                                            </label>
+                                        )
+                                    })}
+                                </div>
+                            )}
+                            {abierto && (
+                                <div className="banner banner-info text-xs">
+                                    Torneo abierto: cualquier jugador puede inscribirse, sin importar su categoría.
+                                </div>
+                            )}
+                        </div>
+                    )
+                ) : (
+                    <div className="banner banner-info text-xs">
+                        Los torneos de {modalidad === 'DOBLES' ? 'dobles' : 'por equipos'} son
+                        abiertos a todas las categorías. Se asignarán automáticamente al crear el torneo.
+                    </div>
+                )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" variant="secondary" onClick={onCancelAction} disabled={isSubmitting}>
+                    Cancelar
+                </Button>
+                <Button type="submit" variant="primary" isLoading={isSubmitting}>
+                    {isSubmitting ? 'Guardando…' : 'Guardar'}
+                </Button>
+            </div>
+        </form>
+    )
 }

@@ -1,102 +1,111 @@
 'use client'
 
-import Link from 'next/link'
-import { useState } from 'react'
-import { Bars3Icon, XMarkIcon } from '@heroicons/react/24/outline'
+import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
-import { useSession, signOut } from 'next-auth/react'
+import { Bars3Icon, XMarkIcon } from '@heroicons/react/24/outline'
+import Sidebar from './Sidebar'
+import { useSession } from 'next-auth/react'
 
-export default function Header() {
+interface HeaderProps {
+    /** When true, render the sidebar on desktop and a top bar with drawer on mobile. */
+    withShell?: boolean
+    /** Page title shown in the mobile top bar. */
+    title?: string
+}
+
+/**
+ * Header is the top bar for dashboard pages. It always renders the Sidebar
+ * on desktop (persistent) and exposes a hamburger drawer on mobile.
+ *
+ * Pass `withShell={false}` to use it as a simple top bar (e.g. for the
+ * landing/login page) — the sidebar is then omitted.
+ */
+export default function Header({ withShell = true, title }: HeaderProps) {
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
     const pathName = usePathname()
     const { data: session } = useSession()
 
-    const navigation = [
-        { name: 'Ranking', href: '/dashboard/Ranking' },
-        { name: 'Estadísticas', href: '/dashboard/estadisticas' },
-        { name: 'Jugadores', href: '/dashboard/jugadores' },
-        { name: 'Torneos', href: '/dashboard/torneos' },
-        { name: 'Partidos', href: '/dashboard/partidos' },
-        { name: 'Clubes', href: '/dashboard/clubes' },
-    ]
+    // Close drawer on route change
+    useEffect(() => {
+        setMobileMenuOpen(false)
+    }, [pathName])
 
-    const showNavigation = pathName !== '/'
+    if (!withShell) {
+        return null
+    }
+
+    // Derive title from pathname if not provided
+    const derivedTitle = title ?? deriveTitle(pathName)
 
     return (
-        <header className="bg-blue-700 text-white shadow-md">
-            <div className="container mx-auto px-4">
-                <div className="flex justify-between items-center py-4">
-
-                    {/* Izquierda: Botón de logout + Logo */}
-                    <div className="flex items-center space-x-4">
-                        {session && (
-                            <button
-                                onClick={() => signOut({ callbackUrl: '/' })}
-                                className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-md text-sm"
-                            >
-                                Cerrar Sesion
-                            </button>
-                        )}
-
-                        <Link href="/dashboard" className="text-xl font-bold">
-                            Advanced Table Tennis Academy
-                        </Link>
-                    </div>
-
-                    {/* Menú para desktop */}
-                    {showNavigation && (
-                        <nav className="hidden md:flex space-x-6">
-                            {navigation.map((item) => (
-                                <Link
-                                    key={item.name}
-                                    href={item.href}
-                                    className="hover:underline font-medium"
-                                >
-                                    {item.name}
-                                </Link>
-                            ))}
-                        </nav>
-                    )}
-
-                    {/* Botón móvil solo si hay navegación */}
-                    {showNavigation && (
-                        <button
-                            type="button"
-                            className="md:hidden text-white"
-                            onClick={() => setMobileMenuOpen(true)}
-                        >
-                            <Bars3Icon className="h-6 w-6" />
-                        </button>
-                    )}
-                </div>
+        <>
+            {/* Desktop: persistent sidebar is rendered by Sidebar.tsx via this Header
+                wrapper. We render it inline here so callers don't need to think
+                about placement. On mobile, the sidebar lives inside the drawer. */}
+            <div className="hidden md:block">
+                <Sidebar />
             </div>
 
-            {/* Menú móvil */}
-            {mobileMenuOpen && showNavigation && (
-                <div className="md:hidden fixed inset-0 z-50 bg-blue-700">
-                    <div className="flex justify-end p-4">
+            {/* Mobile top bar */}
+            <header className="md:hidden sticky top-0 z-30 bg-canvas/80 backdrop-blur border-b border-line">
+                <div className="flex items-center justify-between px-4 h-14">
+                    <div className="flex items-center gap-2">
+                        <div
+                            className="h-8 w-8 rounded-md bg-brand-soft text-brand flex items-center justify-center font-semibold text-xs"
+                            aria-hidden="true"
+                        >
+                            ATTA
+                        </div>
+                        <span className="text-sm font-semibold text-fg truncate">
+                            {derivedTitle}
+                        </span>
+                    </div>
+                    {session && (
                         <button
                             type="button"
-                            className="text-white"
-                            onClick={() => setMobileMenuOpen(false)}
+                            onClick={() => setMobileMenuOpen(true)}
+                            className="btn btn-ghost btn-icon"
+                            aria-label="Abrir menú"
                         >
-                            <XMarkIcon className="h-6 w-6" />
+                            <Bars3Icon className="h-5 w-5" />
                         </button>
+                    )}
+                </div>
+            </header>
+
+            {/* Mobile drawer */}
+            {mobileMenuOpen && (
+                <div
+                    className="md:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm animate-fade-in"
+                    onClick={() => setMobileMenuOpen(false)}
+                >
+                    <div
+                        className="absolute inset-y-0 left-0"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <Sidebar
+                            asDrawer
+                            onNavigate={() => setMobileMenuOpen(false)}
+                        />
                     </div>
-                    <nav className="flex flex-col items-center space-y-6 py-10">
-                        {navigation.map((item) => (
-                            <Link
-                                key={item.name}
-                                href={item.href}
-                                className="text-xl font-medium hover:underline"
-                                onClick={() => setMobileMenuOpen(false)}
-                            >
-                                {item.name}
-                            </Link>
-                        ))}
-                    </nav>
+                    <button
+                        type="button"
+                        className="absolute top-3 right-3 btn btn-ghost btn-icon"
+                        onClick={() => setMobileMenuOpen(false)}
+                        aria-label="Cerrar menú"
+                    >
+                        <XMarkIcon className="h-5 w-5" />
+                    </button>
                 </div>
             )}
-        </header>
+        </>
     )
+}
+
+function deriveTitle(pathname: string | null): string {
+    if (!pathname) return 'ATTA'
+    if (pathname === '/dashboard') return 'Panel'
+    const segments = pathname.split('/').filter(Boolean)
+    const last = segments[segments.length - 1] ?? 'ATTA'
+    return last.charAt(0).toUpperCase() + last.slice(1)
 }

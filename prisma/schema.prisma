@@ -16,6 +16,9 @@ model categorias {
   jugadores                                                                jugadores[]
   participaciones                                                          participaciones[]
   torneo_categorias                                                        torneo_categorias[]
+  torneo_grupos                                                            torneo_grupos[]
+  torneo_participantes                                                     torneo_participantes[]
+  torneo_partidos_programados                                              torneo_partidos_programados[]
 }
 
 model clubes {
@@ -58,6 +61,10 @@ model jugadores {
   partidos_partidos_jugador1_idTojugadores partidos[]             @relation("partidos_jugador1_idTojugadores")
   partidos_partidos_jugador2_idTojugadores partidos[]             @relation("partidos_jugador2_idTojugadores")
   partidos_partidos_ganador_idTojugadores  partidos[]             @relation("partidos_ganador_idTojugadores")
+  torneo_participantes                     torneo_participantes[]
+  torneo_participante_miembros             torneo_participante_miembros[]
+  partidos_programados_arbitrados           torneo_partidos_programados[] @relation("partidos_programados_arbitro")
+  partidos_detalle                          torneo_partido_detalle_jugadores[]
 
   @@index([categoria_id], map: "categoria_id")
   @@index([club_id], map: "club_id")
@@ -65,18 +72,19 @@ model jugadores {
 }
 
 model participaciones {
-  id              Int                              @id @default(autoincrement())
-  jugador_id      Int
-  torneo_id       Int
-  categoria_id    Int
-  elo_antes       Float                            @db.Float
-  elo_despues     Float                            @db.Float
-  bonificacion    Int?                             @default(0)
-  ronda_alcanzada participaciones_ronda_alcanzada?
-  posicion        Int?
-  jugadores       jugadores                        @relation(fields: [jugador_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "participaciones_ibfk_1")
-  torneos         torneos                          @relation(fields: [torneo_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "participaciones_ibfk_2")
-  categorias      categorias                       @relation(fields: [categoria_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "participaciones_ibfk_3")
+  id                         Int                              @id @default(autoincrement())
+  jugador_id                 Int
+  torneo_id                  Int
+  categoria_id               Int
+  elo_antes                  Float                            @db.Float
+  elo_despues                Float                            @db.Float
+  bonificacion               Int?                             @default(0)
+  ronda_alcanzada            participaciones_ronda_alcanzada?
+  posicion                   Int?
+  jugadores                  jugadores                        @relation(fields: [jugador_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "participaciones_ibfk_1")
+  torneos                    torneos                          @relation(fields: [torneo_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "participaciones_ibfk_2")
+  categorias                 categorias                       @relation(fields: [categoria_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "participaciones_ibfk_3")
+  torneo_grupo_participantes torneo_grupo_participantes[]
 
   @@index([categoria_id], map: "categoria_id")
   @@index([jugador_id], map: "jugador_id")
@@ -119,11 +127,207 @@ model torneos {
   nombre               String                 @db.VarChar(100)
   fecha                DateTime               @db.Date
   ubicacion            String?                @db.VarChar(100)
+  modalidad            torneo_modalidad       @default(INDIVIDUAL)
+  // Cuando es true, el torneo admite jugadores de cualquier categoría. En
+  // INDIVIDUAL el frontend puede crear torneos abiertos manualmente; en
+  // DOBLES/EQUIPOS se considera abierto por modalidad.
+  abierto              Boolean                @default(false)
   historial_categorias historial_categorias[]
   jugadores            jugadores[]
   participaciones      participaciones[]
   partidos             partidos[]
   torneo_categorias    torneo_categorias[]
+  torneo_grupos        torneo_grupos[]
+  torneo_participantes torneo_participantes[]
+  torneo_partidos_programados torneo_partidos_programados[]
+}
+
+model torneo_grupos {
+  id           Int @id @default(autoincrement())
+  torneo_id    Int
+  categoria_id Int
+  numero_grupo Int
+
+  created_at DateTime @default(now())
+
+  torneos    torneos    @relation(fields: [torneo_id], references: [id], onDelete: Cascade)
+  categorias categorias @relation(fields: [categoria_id], references: [id], onDelete: Cascade)
+
+  participantes torneo_grupo_participantes[]
+  partidos      torneo_partidos_programados[]
+
+  @@index([torneo_id])
+  @@index([categoria_id])
+}
+
+model torneo_grupo_participantes {
+  id                     Int      @id @default(autoincrement())
+  grupo_id               Int
+  torneo_participante_id Int
+  posicion               Int?
+  created_at             DateTime @default(now())
+
+  torneo_grupos        torneo_grupos        @relation(fields: [grupo_id], references: [id], onDelete: Cascade)
+  torneo_participantes torneo_participantes @relation(fields: [torneo_participante_id], references: [id], onDelete: Cascade)
+  participaciones      participaciones?     @relation(fields: [participacionesId], references: [id])
+  participacionesId    Int?
+
+  @@unique([grupo_id, torneo_participante_id])
+  @@index([grupo_id])
+  @@index([torneo_participante_id])
+}
+
+model torneo_participantes {
+  id                  Int      @id @default(autoincrement())
+  torneo_id           Int
+  // Integrante representante, conservado por compatibilidad con el modelo y
+  // datos históricos. La lista completa vive en miembros.
+  jugador_id          Int
+  categoria_id        Int
+  nombre_personalizado String?  @db.VarChar(100)
+  seed                Int      @default(0)
+  created_at          DateTime @default(now())
+
+  torneos    torneos    @relation(fields: [torneo_id], references: [id], onDelete: Cascade)
+  jugadores  jugadores  @relation(fields: [jugador_id], references: [id], onDelete: Cascade)
+  categorias categorias @relation(fields: [categoria_id], references: [id], onDelete: Cascade)
+
+  torneo_grupo_participantes torneo_grupo_participantes[]
+  miembros                    torneo_participante_miembros[]
+  partidos_como_local         torneo_partidos_programados[] @relation("partido_programado_local")
+  partidos_como_visitante     torneo_partidos_programados[] @relation("partido_programado_visitante")
+  partidos_ganados            torneo_partidos_programados[] @relation("partido_programado_ganador")
+
+  @@index([torneo_id])
+  @@index([jugador_id])
+  @@index([categoria_id])
+}
+
+/// Los integrantes pertenecen a la inscripción del torneo; así una misma
+/// identidad puede representar a una persona, una pareja o un equipo.
+model torneo_participante_miembros {
+  id                     Int                   @id @default(autoincrement())
+  torneo_participante_id Int
+  jugador_id             Int
+  orden                  Int                   @default(1)
+  created_at             DateTime              @default(now())
+
+  torneo_participantes torneo_participantes @relation(fields: [torneo_participante_id], references: [id], onDelete: Cascade)
+  jugadores            jugadores            @relation(fields: [jugador_id], references: [id], onDelete: Cascade)
+
+  @@unique([torneo_participante_id, jugador_id])
+  @@index([jugador_id])
+}
+
+/// Partido visible para grupos y llaves. La tabla `partidos` conserva el
+/// historial individual que impacta el ranking.
+model torneo_partidos_programados {
+  id                        Int                    @id @default(autoincrement())
+  torneo_id                 Int
+  categoria_id              Int
+  grupo_id                  Int?
+  participante_local_id     Int?
+  participante_visitante_id Int?
+  arbitro_jugador_id        Int?
+  fase                      fase_partido_torneo @default(GRUPOS)
+  ronda_eliminacion         String?             @db.VarChar(30)
+  posicion_llave            Int?
+  siguiente_partido_id      Int?
+  siguiente_lado            lado_partido?
+  ganador_participante_id   Int?
+  sets_local                Int                    @default(0)
+  sets_visitante            Int                    @default(0)
+  orden                     Int                    @default(1)
+  estado                    estado_partido_torneo  @default(PENDIENTE)
+  created_at                DateTime               @default(now())
+  updated_at                DateTime               @updatedAt
+
+  torneos                torneos               @relation(fields: [torneo_id], references: [id], onDelete: Cascade)
+  categorias             categorias            @relation(fields: [categoria_id], references: [id], onDelete: Cascade)
+  torneo_grupos          torneo_grupos?        @relation(fields: [grupo_id], references: [id], onDelete: Cascade)
+  participante_local     torneo_participantes? @relation("partido_programado_local", fields: [participante_local_id], references: [id], onDelete: Cascade)
+  participante_visitante torneo_participantes? @relation("partido_programado_visitante", fields: [participante_visitante_id], references: [id], onDelete: Cascade)
+  ganador                torneo_participantes? @relation("partido_programado_ganador", fields: [ganador_participante_id], references: [id], onDelete: SetNull)
+  arbitro                jugadores?            @relation("partidos_programados_arbitro", fields: [arbitro_jugador_id], references: [id], onDelete: SetNull)
+  sets                   torneo_partido_sets[]
+  detalles               torneo_partido_detalles[]
+  auditorias             torneo_partido_auditorias[]
+
+  @@unique([grupo_id, orden])
+  @@index([torneo_id])
+  @@index([categoria_id])
+  @@index([participante_local_id])
+  @@index([participante_visitante_id])
+}
+
+model torneo_partido_auditorias {
+  id                    Int                    @id @default(autoincrement())
+  partido_programado_id Int
+  accion                accion_partido_auditoria
+  motivo                String?                @db.VarChar(255)
+  detalle               Json?
+  created_at            DateTime               @default(now())
+
+  partido_programado torneo_partidos_programados @relation(fields: [partido_programado_id], references: [id], onDelete: Cascade)
+
+  @@index([partido_programado_id])
+}
+
+model torneo_partido_sets {
+  id                    Int                         @id @default(autoincrement())
+  partido_programado_id Int
+  numero                Int
+  puntos_local          Int
+  puntos_visitante      Int
+
+  partido_programado torneo_partidos_programados @relation(fields: [partido_programado_id], references: [id], onDelete: Cascade)
+
+  @@unique([partido_programado_id, numero])
+}
+
+/// Los cinco partidos que componen un encuentro por equipos: dobles y cuatro
+/// individuales. Solo los detalles individuales se envían al SP de ranking.
+model torneo_partido_detalles {
+  id                    Int                   @id @default(autoincrement())
+  partido_programado_id Int
+  orden                 Int
+  tipo                  tipo_partido_equipo
+  ganador_lado          lado_partido?
+  sets_local            Int                   @default(0)
+  sets_visitante        Int                   @default(0)
+  estado                estado_partido_torneo @default(PENDIENTE)
+
+  partido_programado torneo_partidos_programados    @relation(fields: [partido_programado_id], references: [id], onDelete: Cascade)
+  jugadores          torneo_partido_detalle_jugadores[]
+  sets               torneo_partido_detalle_sets[]
+
+  @@unique([partido_programado_id, orden])
+}
+
+model torneo_partido_detalle_jugadores {
+  id         Int          @id @default(autoincrement())
+  detalle_id Int
+  jugador_id Int
+  lado       lado_partido
+  orden      Int          @default(1)
+
+  detalle   torneo_partido_detalles @relation(fields: [detalle_id], references: [id], onDelete: Cascade)
+  jugadores jugadores                @relation(fields: [jugador_id], references: [id], onDelete: Cascade)
+
+  @@unique([detalle_id, jugador_id])
+  @@index([jugador_id])
+}
+
+model torneo_partido_detalle_sets {
+  id         Int                      @id @default(autoincrement())
+  detalle_id Int
+  numero     Int
+  puntos_local Int
+  puntos_visitante Int
+
+  detalle torneo_partido_detalles @relation(fields: [detalle_id], references: [id], onDelete: Cascade)
+
+  @@unique([detalle_id, numero])
 }
 
 enum categorias_nombre {
@@ -153,7 +357,7 @@ enum partidos_ronda {
   Cuartos
   Semifinal      @map("semifinal")
   Final
-  Campe_n        @map("Campeón")
+  Campe_n        @map("Campeón")
 }
 
 enum participaciones_ronda_alcanzada {
@@ -164,5 +368,38 @@ enum participaciones_ronda_alcanzada {
   cuartos
   semifinal
   final
-  campe_n        @map("campeón")
+  campe_n        @map("campeón")
+}
+
+enum estado_partido_torneo {
+  PENDIENTE
+  FINALIZADO
+}
+
+enum fase_partido_torneo {
+  GRUPOS
+  ELIMINACION
+}
+
+enum accion_partido_auditoria {
+  RESULTADO
+  REVERSION
+  AJUSTE_MANUAL
+  AVANCE_MANUAL
+}
+
+enum tipo_partido_equipo {
+  DOBLES
+  INDIVIDUAL
+}
+
+enum lado_partido {
+  LOCAL
+  VISITANTE
+}
+
+enum torneo_modalidad {
+  INDIVIDUAL
+  DOBLES
+  EQUIPOS
 }

@@ -1,10 +1,15 @@
 'use client'
 import { useState, useEffect } from 'react'
 import DataTable from '@/components/ui/DataTable'
-import { PlusIcon } from '@heroicons/react/24/outline'
+import { PlusIcon, ArrowUturnLeftIcon, TrophyIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import PartidoForm from '@/components/forms/PartidoForm'
 import { safeFetch } from '@/lib/api'
-import { toast } from "react-hot-toast"
+import { toast } from 'react-hot-toast'
+import { Section } from '@/components/ui/Section'
+import { Select } from '@/components/ui/Select'
+import { Button } from '@/components/ui/Button'
+import { Badge } from '@/components/ui/Badge'
+import PartidosResultadoModal from '@/components/ui/PartidosResultadoModal'
 
 type Partido = {
     id: number
@@ -19,7 +24,40 @@ type Partido = {
 type Torneo = {
     id: number
     nombre: string
+    modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS'
 }
+
+interface PartidoTorneo {
+    id: number
+    orden: number
+    sets_local: number
+    sets_visitante: number
+    estado: 'PENDIENTE' | 'FINALIZADO'
+    grupo_id?: number | null
+    categoria_id: number
+    torneo_grupos: { id: number; numero_grupo: number } | null
+    participante_local: {
+        id: number
+        nombre_personalizado?: string | null
+        jugadores?: { id: number; nombre: string } | null
+        miembros: { jugadores: { id: number; nombre: string } }[]
+    }
+    participante_visitante: {
+        id: number
+        nombre_personalizado?: string | null
+        jugadores?: { id: number; nombre: string } | null
+        miembros: { jugadores: { id: number; nombre: string } }[]
+    }
+    arbitro: { id: number; nombre: string } | null
+    sets: { numero: number; puntos_local: number; puntos_visitante: number }[]
+    detalles: never[] // No usamos detalles en INDIVIDUAL/DOBLES del recopilatorio
+}
+
+const nombreParticipante = (p: PartidoTorneo['participante_local']) =>
+    p.nombre_personalizado?.trim()
+    || p.miembros.map(m => m.jugadores.nombre).join(' / ')
+    || p.jugadores?.nombre
+    || 'Participante'
 
 export default function PartidosSection() {
     const [showForm, setShowForm] = useState(false)
@@ -32,6 +70,33 @@ export default function PartidosSection() {
     const [totalItems, setTotalItems] = useState(0)
     const [isLoading, setIsLoading] = useState(false)
 
+    // Vista alternativa: partidos programados del torneo seleccionado
+    const [partidosTorneo, setPartidosTorneo] = useState<PartidoTorneo[]>([])
+    const [loadingTorneo, setLoadingTorneo] = useState(false)
+    const [partidoResultadoId, setPartidoResultadoId] = useState<number | null>(null)
+    const [partidoCompleto, setPartidoCompleto] = useState<PartidoTorneo | null>(null)
+    const [cargandoPartido, setCargandoPartido] = useState(false)
+    const [borradores, setBorradores] = useState<Record<number, { sets: { local: number; visitante: number }[] }>>({})
+    const [torneoActivo, setTorneoActivo] = useState<Torneo | null>(null)
+
+    // Cuando el usuario hace click en un partido, cargamos su detalle
+    // completo (sets, detalles para EQUIPOS) en una llamada aparte. Esto
+    // permite que el listado del torneo viaje en modo `lite=true` y no
+    // reviente el timeout de serverless.
+    const abrirPartido = async (partidoId: number) => {
+        if (!selectedTorneoId) return
+        setCargandoPartido(true)
+        try {
+            const data = await safeFetch(`/api/torneos/${selectedTorneoId}/partidos/${partidoId}`)
+            setPartidoCompleto(data.partido)
+            setPartidoResultadoId(partidoId)
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'No se pudo cargar el partido')
+        } finally {
+            setCargandoPartido(false)
+        }
+    }
+
     const fetchPartidos = async (page: number, limit: number) => {
         try {
             setIsLoading(true)
@@ -39,7 +104,6 @@ export default function PartidosSection() {
             const data = await safeFetch(
                 `/api/partidos?page=${page}&limit=${limit}${selectedTorneoId ? `&torneo_id=${selectedTorneoId}` : ''}`
             )
-
             const parsed = data.partidos.map((partido: Partido) => ({
                 id: partido.id,
                 jugador1Nombre: partido.jugador1Nombre,
@@ -48,9 +112,7 @@ export default function PartidosSection() {
                 torneoNombre: partido.torneoNombre,
                 ronda: partido.ronda,
                 fecha: partido.fecha,
-                acciones: true
             }))
-
             setPartidos(parsed)
             setTotalItems(data.total)
         } catch {
@@ -61,9 +123,39 @@ export default function PartidosSection() {
         }
     }
 
+    // Cuando se selecciona un torneo, además de filtrar el recopilatorio,
+    // cargamos los partidos PROGRAMADOS de ese torneo. Usamos `lite=true` para
+    // no inflar la respuesta con sets/detalles anidados (en serverless, la
+    // versión completa puede superar el timeout de 10s de Vercel). Cuando el
+    // usuario abre un partido, el modal hace su propio GET al endpoint del
+    // partido individual para traer los sets/detalles.
+    const fetchPartidosTorneo = async () => {
+        if (!selectedTorneoId) {
+            setPartidosTorneo([])
+            setTorneoActivo(null)
+            return
+        }
+        setLoadingTorneo(true)
+        try {
+            const data = await safeFetch(`/api/torneos/${selectedTorneoId}/partidos?lite=true`)
+            setPartidosTorneo((data.partidos || []) as PartidoTorneo[])
+            const t = torneos.find(x => x.id.toString() === selectedTorneoId)
+            if (t) setTorneoActivo(t)
+        } catch {
+            toast.error('No se pudieron cargar los partidos del torneo')
+        } finally {
+            setLoadingTorneo(false)
+        }
+    }
+
     useEffect(() => {
         fetchPartidos(currentPage, itemsPerPage)
     }, [currentPage, itemsPerPage, selectedTorneoId])
+
+    useEffect(() => {
+        fetchPartidosTorneo()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedTorneoId, torneos])
 
     useEffect(() => {
         const fetchTorneos = async () => {
@@ -80,16 +172,12 @@ export default function PartidosSection() {
     const handleTorneoChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         setSelectedTorneoId(e.target.value)
         setCurrentPage(1)
+        setBorradores({})
     }
 
     const handleUndo = async (id: number) => {
-        if (!confirm("¿Revertir este partido?")) return
-
         try {
-            const res = await fetch(`/api/partidos/${id}/revert`, {
-                method: 'POST'
-            })
-
+            const res = await fetch(`/api/partidos/${id}/revert`, { method: 'POST' })
             if (res.ok) {
                 toast.success('Partido revertido')
                 fetchPartidos(currentPage, itemsPerPage)
@@ -102,64 +190,110 @@ export default function PartidosSection() {
     }
 
     const columns = [
-        { header: 'ID', accessor: 'id' },
-        { header: 'Jugador 1', accessor: 'jugador1Nombre' },
-        { header: 'Jugador 2', accessor: 'jugador2Nombre' },
-        { header: 'Ganador', accessor: 'ganadorNombre' },
-        { header: 'Ronda', accessor: 'ronda' },
-        { header: 'Torneo', accessor: 'torneoNombre' },
-        { header: 'Fecha', accessor: 'fecha' },
         {
-            header: 'Acciones',
-            accessor: 'acciones',
-            render: (_value: unknown, row: Partido) => (
-                <button
+            header: 'ID',
+            accessor: 'id',
+            key: 'id',
+            className: 'w-16 text-fg-muted',
+        },
+        {
+            header: 'Jugador 1',
+            accessor: 'jugador1Nombre',
+            render: (n: string) => <span className="font-medium text-fg">{n}</span>,
+        },
+        {
+            header: 'Jugador 2',
+            accessor: 'jugador2Nombre',
+            render: (n: string) => n ?? <span className="text-fg-muted">—</span>,
+        },
+        {
+            header: 'Ganador',
+            accessor: 'ganadorNombre',
+            render: (n: string) => (
+                <Badge variant="success">{n}</Badge>
+            ),
+        },
+        {
+            header: 'Ronda',
+            accessor: 'ronda',
+            render: (n: string) =>
+                n ? <Badge variant="neutral">{n}</Badge> : <span className="text-fg-muted">—</span>,
+        },
+        {
+            header: 'Torneo',
+            accessor: 'torneoNombre',
+            className: 'hidden md:table-cell',
+        },
+        {
+            header: 'Fecha',
+            accessor: 'fecha',
+            className: 'hidden lg:table-cell whitespace-nowrap text-fg-muted',
+        },
+        {
+            header: '',
+            accessor: 'id',
+            key: 'actions',
+            className: 'w-20 text-right',
+            render: (_: number, row: Partido) => (
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
                     onClick={(e) => {
-                        e.stopPropagation(); // evita que dispare el onRowClick
-                        handleUndo(row.id);
+                        e.stopPropagation()
+                        handleUndo(row.id)
                     }}
-                    className="text-red-600 hover:underline"
+                    leadingIcon={<ArrowUturnLeftIcon className="h-3.5 w-3.5" />}
                 >
                     Deshacer
-                </button>
-            )
-        }
-
-
+                </Button>
+            ),
+        },
     ]
 
+    // ── Tabla de partidos programados del torneo seleccionado ──
+    const hayTorneoSeleccionado = !!selectedTorneoId
+    const partidosTorneoAgrupados = (() => {
+        const grupos = new Map<number, { id: number; numero: number; partidos: PartidoTorneo[] }>()
+        for (const p of partidosTorneo) {
+            if (!p.torneo_grupos) continue
+            const g = grupos.get(p.torneo_grupos.id) || { id: p.torneo_grupos.id, numero: p.torneo_grupos.numero_grupo, partidos: [] }
+            g.partidos.push(p)
+            grupos.set(p.torneo_grupos.id, g)
+        }
+        return [...grupos.values()].sort((a, b) => a.numero - b.numero)
+    })()
+
     return (
-        <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-bold">Partidos</h2>
-                <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
-                    <select
+        <Section
+            title="Partidos"
+            subtitle="Historial de partidos y resultados"
+            actions={
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                    <Select
                         value={selectedTorneoId}
                         onChange={handleTorneoChange}
-                        className="border rounded px-3 py-1 w-full md:w-48"
+                        className="sm:w-48"
                     >
-                        <option value="">Todos los Torneos</option>
-                        {torneos.map((tournament) => (
-                            <option key={tournament.id} value={tournament.id}>
-                                {tournament.nombre}
-                            </option>
+                        <option value="">Todos los torneos</option>
+                        {torneos.map((t) => (
+                            <option key={t.id} value={t.id}>{t.nombre}</option>
                         ))}
-                    </select>
-                    <button
-                        onClick={() => setShowForm(true)}
-                        className="bg-blue-600 text-white px-3 py-1 rounded flex items-center"
-                    >
-                        <PlusIcon className="h-4 w-4 mr-1" />
-                        Nuevo
-                    </button>
+                    </Select>
+                    {!showForm && (
+                        <Button
+                            variant="primary"
+                            size="sm"
+                            leadingIcon={<PlusIcon className="h-4 w-4" />}
+                            onClick={() => setShowForm(true)}
+                        >
+                            Nuevo
+                        </Button>
+                    )}
                 </div>
-            </div>
-
-            {error && (
-                <div className="mb-4 p-3 bg-red-100 text-red-700 rounded">
-                    {error}
-                </div>
-            )}
+            }
+        >
+            {error && <div className="banner banner-danger mb-4">{error}</div>}
 
             {showForm ? (
                 <PartidoForm
@@ -170,18 +304,133 @@ export default function PartidosSection() {
                     onCancelAction={() => setShowForm(false)}
                 />
             ) : (
-                <DataTable
-                    columns={columns}
-                    data={partidos}
-                    onRowClick={(row) => console.log(row)}
-                    currentPage={currentPage}
-                    itemsPerPage={itemsPerPage}
-                    totalItems={totalItems}
-                    onPageChange={setCurrentPage}
-                    onItemsPerPageChange={setItemsPerPage}
-                    isLoading={isLoading}
+                <>
+                    {/* ── Bloque de partidos programados del torneo seleccionado ── */}
+                    {hayTorneoSeleccionado && (
+                        <div className="mb-6">
+                            <div className="flex items-center justify-between mb-2">
+                                <h3 className="text-sm font-semibold text-fg inline-flex items-center gap-2">
+                                    <TrophyIcon className="h-4 w-4 text-fg-muted" />
+                                    Partidos programados de {torneoActivo?.nombre || '—'}
+                                </h3>
+                                {Object.keys(borradores).length > 0 && (
+                                    <Badge variant="warning">
+                                        <span className="inline-flex items-center gap-1">
+                                            <ExclamationTriangleIcon className="h-3 w-3" />
+                                            {Object.keys(borradores).length} borrador{Object.keys(borradores).length === 1 ? '' : 'es'}
+                                        </span>
+                                    </Badge>
+                                )}
+                            </div>
+                            {loadingTorneo ? (
+                                <div className="text-center py-10 text-fg-muted text-sm">Cargando partidos…</div>
+                            ) : partidosTorneoAgrupados.length === 0 ? (
+                                <div className="card-flush p-6 text-center text-fg-muted text-sm">
+                                    Este torneo aún no tiene partidos programados. Genera los cruces desde
+                                    <b> Torneos → {torneoActivo?.nombre} → Partidos</b>.
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    {partidosTorneoAgrupados.map(grupo => (
+                                        <div key={grupo.id} className="card-flush overflow-hidden">
+                                            <div className="px-4 py-2.5 bg-subtle border-b border-line text-xs font-bold text-fg-muted uppercase tracking-wider">
+                                                Grupo {grupo.numero}
+                                            </div>
+                                            <div className="divide-y divide-line">
+                                                {grupo.partidos.map(partido => {
+                                                    const finalizado = partido.estado === 'FINALIZADO'
+                                                    const tieneBorrador = !!borradores[partido.id]
+                                                    return (
+                                                        <button
+                                                            key={partido.id}
+                                                            type="button"
+                                                            onClick={() => abrirPartido(partido.id)}
+                                                            className="w-full p-3.5 text-left hover:bg-subtle transition-colors flex flex-col sm:flex-row sm:items-center gap-2"
+                                                        >
+                                                            <span className="chip w-7 text-center">#{partido.orden}</span>
+                                                            <span className="flex-1 font-semibold text-fg truncate">
+                                                                {nombreParticipante(partido.participante_local)}
+                                                            </span>
+                                                            <span className="font-mono font-bold text-fg text-sm">
+                                                                {finalizado
+                                                                    ? `${partido.sets_local} : ${partido.sets_visitante}`
+                                                                    : <span className="text-fg-muted font-normal">vs</span>}
+                                                            </span>
+                                                            <span className="flex-1 font-semibold text-fg truncate">
+                                                                {nombreParticipante(partido.participante_visitante)}
+                                                            </span>
+                                                            {tieneBorrador ? (
+                                                                <Badge variant="warning">
+                                                                    <span className="inline-flex items-center gap-1">
+                                                                        <ExclamationTriangleIcon className="h-3 w-3" />
+                                                                        Borrador
+                                                                    </span>
+                                                                </Badge>
+                                                            ) : (
+                                                                <Badge variant={finalizado ? 'success' : 'warning'}>
+                                                                    {finalizado ? 'Finalizado' : 'Registrar'}
+                                                                </Badge>
+                                                            )}
+                                                        </button>
+                                                    )
+                                                })}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ── Recopilatorio de partidos libres (sin atar a torneo, o de la BD `partidos`) ── */}
+                    <div>
+                        <h3 className="text-sm font-semibold text-fg mb-2">
+                            Recopilatorio
+                            {hayTorneoSeleccionado && (
+                                <span className="text-fg-muted font-normal text-xs ml-2">
+                                    (filtrado por {torneoActivo?.nombre})
+                                </span>
+                            )}
+                        </h3>
+                        <DataTable
+                            columns={columns}
+                            data={partidos}
+                            currentPage={currentPage}
+                            itemsPerPage={itemsPerPage}
+                            totalItems={totalItems}
+                            onPageChange={setCurrentPage}
+                            onItemsPerPageChange={setItemsPerPage}
+                            isLoading={isLoading}
+                            rowKey={(row: Partido) => row.id}
+                        />
+                    </div>
+                </>
+            )}
+
+            {cargandoPartido && (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
+                    <div className="card-elevated px-5 py-3 text-sm text-fg-muted">Cargando partido…</div>
+                </div>
+            )}
+
+            {partidoResultadoId !== null && torneoActivo && partidoCompleto != null && (
+                <PartidosResultadoModal
+                    isOpen
+                    onClose={() => {
+                        setPartidoResultadoId(null)
+                        setPartidoCompleto(null)
+                    }}
+                    torneo={torneoActivo}
+                    partidos={[partidoCompleto as never]}
+                    partidoInicialId={partidoResultadoId}
+                    borradores={borradores}
+                    onBorradoresChange={setBorradores}
+                    onPersist={() => {
+                        setPartidoCompleto(null)
+                        fetchPartidosTorneo()
+                    }}
                 />
             )}
-        </div>
+        </Section>
     )
 }

@@ -1,9 +1,8 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
-import Header from '@/components/ui/Header'
 import { Toaster } from 'react-hot-toast'
-import Providers from './providers' // 👈 lo agregamos
+import Providers from './providers'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -14,17 +13,25 @@ export const metadata: Metadata = {
 }
 
 export default function RootLayout({
-                                       children,
-                                   }: {
+    children,
+}: {
     children: React.ReactNode
 }) {
     return (
-        <html lang="es">
-        <body className={`${inter.className} bg-gray-50`}>
-        <Providers> {/* ✅ Envolvemos toda la app */}
-            <Header />
-            <main className="container mx-auto p-4">{children}</main>
-            <Toaster position="top-right" />
+        <html lang="es" className="dark">
+        <body className={`${inter.className} bg-canvas text-fg min-h-screen antialiased`}>
+        <Providers>
+            {children}
+            <Toaster
+                position="top-right"
+                toastOptions={{
+                    style: {
+                        background: 'var(--color-surface)',
+                        color: 'var(--color-fg)',
+                        border: '1px solid var(--color-line)',
+                    },
+                }}
+            />
         </Providers>
         </body>
         </html>
