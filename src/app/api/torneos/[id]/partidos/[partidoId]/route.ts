@@ -161,6 +161,9 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
                 select: { id: true }
             })
             if (!partidoRanking) return NextResponse.json({ error: 'No se encontró el movimiento de ranking asociado' }, { status: 409 })
+            // Forzamos la collation de la sesión a la del ENUM de la tabla
+            // para que las comparaciones internas del SP no mezclen colaciones.
+            await prisma.$executeRawUnsafe(`SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;`)
             await prisma.$executeRawUnsafe(`CALL revertir_partido(${partidoRanking.id})`)
         }
 
