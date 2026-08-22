@@ -6,11 +6,13 @@ import { useRouter } from 'next/navigation'
 import { useSession, signIn, signOut } from 'next-auth/react'
 import { ArrowRightIcon, ArrowRightOnRectangleIcon } from '@heroicons/react/24/outline'
 import { useTheme } from '@/app/providers'
+import CargandoPantalla from '@/components/ui/CargandoPantalla'
 import { MoonIcon, SunIcon } from '@heroicons/react/24/outline'
 
 export default function Home() {
     const router = useRouter()
     const [loading, setLoading] = useState(false)
+    const [intentoAcceso, setIntentoAcceso] = useState(0)
     const { data: session } = useSession()
     const { resolvedTheme, toggleTheme } = useTheme()
 
@@ -36,6 +38,7 @@ export default function Home() {
             }
 
             attempt++
+            setIntentoAcceso(attempt)
             await new Promise((resolve) => setTimeout(resolve, 3000))
         }
 
@@ -159,6 +162,13 @@ export default function Home() {
                                         </>
                                     )}
                                 </button>
+                                {loading && (
+                                    <CargandoPantalla
+                                        titulo="Abriendo el dashboard"
+                                        intento={intentoAcceso}
+                                        totalIntentos={5}
+                                    />
+                                )}
                                 <button
                                     type="button"
                                     onClick={() => signOut({ callbackUrl: '/' })}

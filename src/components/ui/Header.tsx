@@ -48,15 +48,15 @@ export default function Header({ withShell = true, title }: HeaderProps) {
 
             {/* Mobile top bar */}
             <header className="md:hidden sticky top-0 z-30 bg-canvas/80 backdrop-blur border-b border-line">
-                <div className="flex items-center justify-between px-4 h-14">
-                    <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between px-4 h-16 pt-[env(safe-area-inset-top)]">
+                    <div className="flex items-center gap-3 min-w-0">
                         <div
-                            className="h-8 w-8 rounded-md bg-brand-soft text-brand flex items-center justify-center font-semibold text-xs"
+                            className="h-10 w-10 shrink-0 rounded-lg bg-brand-soft text-brand flex items-center justify-center font-bold text-sm"
                             aria-hidden="true"
                         >
                             ATTA
                         </div>
-                        <span className="text-sm font-semibold text-fg truncate">
+                        <span className="text-base font-semibold text-fg truncate">
                             {derivedTitle}
                         </span>
                     </div>
@@ -64,10 +64,10 @@ export default function Header({ withShell = true, title }: HeaderProps) {
                         <button
                             type="button"
                             onClick={() => setMobileMenuOpen(true)}
-                            className="btn btn-ghost btn-icon"
+                            className="btn btn-ghost btn-icon h-11 w-11"
                             aria-label="Abrir menú"
                         >
-                            <Bars3Icon className="h-5 w-5" />
+                            <Bars3Icon className="h-6 w-6" />
                         </button>
                     )}
                 </div>

@@ -9,6 +9,7 @@ export default function useAuthAndDb() {
     const [modalOpen, setModalOpen] = useState(false)
     const [dbReady, setDbReady] = useState(false)
     const [loading, setLoading] = useState(false)
+    const [intento, setIntento] = useState(0)
 
     // Revisar sesión al montar
     useEffect(() => {
@@ -38,6 +39,7 @@ export default function useAuthAndDb() {
                 console.warn(`Intento ${attempt + 1} fallido`, err)
             }
             attempt++
+            setIntento(attempt)
             await new Promise((resolve) => setTimeout(resolve, 3000))
         }
 
@@ -57,6 +59,7 @@ export default function useAuthAndDb() {
         setModalOpen,
         dbReady,
         loading,
+        intento,
         handleLogin,
     }
 }

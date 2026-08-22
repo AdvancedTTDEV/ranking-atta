@@ -225,6 +225,8 @@ body {
     gap: 1rem;
     padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--color-line);
+    /* En pantallas angostas las acciones bajan bajo el título en vez de pisarse */
+    flex-wrap: wrap;
   }
 
   .card-title {
@@ -445,7 +447,12 @@ body {
     width: 100%;
     border-collapse: separate;
     border-spacing: 0;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
+  }
+  @media (min-width: 768px) {
+    .table-base {
+      font-size: 0.875rem;
+    }
   }
 
   .table-base thead th {
@@ -455,15 +462,37 @@ body {
     letter-spacing: 0.04em;
     font-size: 0.6875rem;
     font-weight: 600;
-    padding: 0.625rem 1rem;
+    padding: 0.5rem 0.625rem;
     text-align: left;
     border-bottom: 1px solid var(--color-line);
   }
 
+  /* Header pegajoso cuando la tabla vive en un contenedor con scroll vertical */
+  .table-sticky thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    box-shadow: 0 1px 0 var(--color-line);
+  }
+
   .table-base tbody td {
-    padding: 0.75rem 1rem;
+    padding: 0.55rem 0.625rem;
     border-bottom: 1px solid var(--color-line);
     color: var(--color-fg);
+    transition: background-color 120ms ease;
+  }
+  @media (min-width: 768px) {
+    .table-base tbody td {
+      padding: 0.65rem 0.875rem;
+    }
+    .table-base thead th {
+      padding: 0.625rem 0.875rem;
+    }
+  }
+
+  /* Cebra sutil para escanear filas largas sin perder la línea */
+  .table-base tbody tr:nth-child(even) td {
+    background-color: color-mix(in srgb, var(--color-subtle) 45%, transparent);
   }
 
   .table-base tbody tr:last-child td {
@@ -472,6 +501,52 @@ body {
 
   .table-base tbody tr:hover td {
     background-color: var(--color-subtle);
+  }
+
+  /* Feedback táctil: los botones se "hunden" sutilmente al presionar */
+  .btn {
+    transition: transform 100ms ease, background-color 150ms ease, border-color 150ms ease,
+      color 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
+  }
+  .btn:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  /* Entrada escalonada de filas de tabla (el delay lo fija cada fila) */
+  @keyframes row-enter {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .row-enter {
+    animation: row-enter 260ms ease both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .row-enter {
+      animation: none;
+    }
+  }
+
+  /* Tabla densa de una línea por fila (solo <768px, la activa DataTable) */
+  .tabla-movil thead th {
+    padding: 0.4rem 0.5rem;
+    font-size: 0.625rem;
+  }
+  .tabla-movil tbody td {
+    padding: 0.375rem 0.5rem;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    max-width: 8.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tabla-movil tbody td:first-child {
+    max-width: 10.5rem; /* la columna principal respira un poco más */
   }
 
   /* Tabla densa — para modales y vistas con poco espacio */
@@ -498,6 +573,11 @@ body {
     padding: 0.5rem 0.75rem;
     border-bottom: 1px solid var(--color-line);
     color: var(--color-fg);
+    transition: background-color 120ms ease;
+  }
+
+  .table-compact tbody tr:nth-child(even) td {
+    background-color: color-mix(in srgb, var(--color-subtle) 45%, transparent);
   }
 
   .table-compact tbody tr:last-child td {
@@ -591,7 +671,7 @@ body {
   }
 
   .page-title {
-    font-size: 1.5rem;
+    font-size: 1.25rem;
     font-weight: 600;
     color: var(--color-fg);
     letter-spacing: -0.02em;
@@ -670,4 +750,21 @@ body {
 @keyframes pulseSoft {
   0%, 100% { opacity: 0.55 }
   50% { opacity: 1 }
+}
+
+/* Barras de skeleton con barrido de luz (shimmer). */
+@keyframes shimmerSweep {
+  100% { transform: translateX(100%) }
+}
+.skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.skeleton-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, currentColor 18%, transparent), transparent);
+  animation: shimmerSweep 1.5s infinite;
 }
