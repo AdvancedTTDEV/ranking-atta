@@ -133,7 +133,11 @@ export default function PartidosGrupoModal({
         setDraggingId(partidoId)
         e.dataTransfer.effectAllowed = 'move'
         // Necesario para Firefox: dataTransfer.setData con cualquier string.
-        try { e.dataTransfer.setData('text/plain', String(partidoId)) } catch {}
+        try {
+            e.dataTransfer.setData('text/plain', String(partidoId))
+        } catch {
+            // Algunos navegadores móviles no exponen setData; seguimos sin él.
+        }
     }
 
     const handleDragOver = (e: React.DragEvent, partidoId: number) => {
