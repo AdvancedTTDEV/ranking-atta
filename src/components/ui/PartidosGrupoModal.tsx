@@ -1,6 +1,6 @@
 'use client'
 
-import { ChevronLeftIcon, ChevronRightIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
+import { ChevronLeftIcon, ChevronRightIcon, ExclamationTriangleIcon, UsersIcon } from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -57,6 +57,8 @@ interface Props {
     /** Borradores en memoria: si un partido.id está aquí, se marca como borrador. */
     borradores: Record<number, { sets: { local: number; visitante: number }[] }>
     onSelectPartido: (partidoId: number) => void
+    /** Abre el wizard de alineación para UN partido (modalidades por equipos). */
+    onConfigurarAlineacionPartido?: (partidoId: number) => void
     indiceGrupo: number
     totalGrupos: number
     onPrevGrupo: () => void
@@ -69,6 +71,7 @@ export default function PartidosGrupoModal({
     grupo,
     borradores,
     onSelectPartido,
+    onConfigurarAlineacionPartido,
     indiceGrupo,
     totalGrupos,
     onPrevGrupo,
@@ -120,6 +123,13 @@ export default function PartidosGrupoModal({
                 {grupo.partidos.map(partido => {
                     const finalizado = partido.estado === 'FINALIZADO'
                     const tieneBorrador = !!borradores[partido.id]
+                    // Estado de alineación: todos los sub-partidos tienen
+                    // jugadores en ambos lados.
+                    const alineado = (partido.detalles ?? []).length > 0
+                        && (partido.detalles ?? []).every(d =>
+                            d.jugadores?.some(j => j.lado === 'LOCAL')
+                            && d.jugadores?.some(j => j.lado === 'VISITANTE'),
+                        )
                     return (
                         <div
                             key={partido.id}
@@ -130,31 +140,67 @@ export default function PartidosGrupoModal({
                             className="w-full p-3 text-left card-flush overflow-hidden hover:bg-subtle transition-colors flex flex-col sm:flex-row sm:items-center gap-2 cursor-pointer"
                         >
                             <span className="chip w-7 text-center shrink-0">#{partido.orden}</span>
-                            <span className="flex-1 font-semibold text-fg truncate">
-                                {nombreParticipante(partido.participante_local)}
+                            <span className="flex-1 min-w-0">
+                                <span className="block font-semibold text-fg truncate">
+                                    {nombreParticipante(partido.participante_local)}
+                                </span>
+                                {partido.participante_local.miembros.length > 0 && (
+                                    <span className="block text-[11px] text-fg-muted truncate">
+                                        {partido.participante_local.miembros.map(miembro => miembro.jugadores.nombre).join(' · ')}
+                                    </span>
+                                )}
                             </span>
                             <span className="font-mono font-bold text-fg text-sm">
                                 {finalizado
                                     ? `${partido.sets_local} : ${partido.sets_visitante}`
                                     : <span className="text-fg-muted font-normal">vs</span>}
                             </span>
-                            <span className="flex-1 font-semibold text-fg truncate">
-                                {nombreParticipante(partido.participante_visitante)}
+                            <span className="flex-1 min-w-0">
+                                <span className="block font-semibold text-fg truncate">
+                                    {nombreParticipante(partido.participante_visitante)}
+                                </span>
+                                {partido.participante_visitante.miembros.length > 0 && (
+                                    <span className="block text-[11px] text-fg-muted truncate">
+                                        {partido.participante_visitante.miembros.map(miembro => miembro.jugadores.nombre).join(' · ')}
+                                    </span>
+                                )}
                             </span>
                             <span className="text-xs text-fg-muted hidden md:inline shrink-0">
                                 Árbitro: <b className="text-fg">{partido.arbitro?.nombre || 'Asignar'}</b>
                             </span>
-                            {tieneBorrador ? (
+                            {tieneBorrador && (
                                 <Badge variant="warning">
                                     <span className="inline-flex items-center gap-1">
                                         <ExclamationTriangleIcon className="h-3 w-3" />
                                         Borrador
                                     </span>
                                 </Badge>
-                            ) : (
-                                <Badge variant={finalizado ? 'success' : 'warning'}>
-                                    {finalizado ? 'Finalizado' : 'Registrar'}
+                            )}
+                            {!finalizado && (
+                                <Badge variant={alineado ? 'success' : 'warning'}>
+                                    {alineado ? 'Alineado' : 'Sin alinear'}
                                 </Badge>
+                            )}
+                            {finalizado ? (
+                                <Badge variant={tieneBorrador ? 'warning' : 'success'}>
+                                    {tieneBorrador ? 'Borrador' : 'Finalizado'}
+                                </Badge>
+                            ) : null}
+                            {onConfigurarAlineacionPartido && !finalizado && (
+                                <button
+                                    type="button"
+                                    title={alineado
+                                        ? 'Cambiar la alineación (A, B, C vs X, Y, Z) de este encuentro'
+                                        : 'Configurar alineación (A, B, C vs X, Y, Z) de este encuentro'}
+                                    onClick={e => {
+                                        e.stopPropagation()
+                                        onConfigurarAlineacionPartido(partido.id)
+                                    }}
+                                    className={`shrink-0 text-[0.65rem] hover:underline inline-flex items-center gap-1 ${alineado ? 'text-fg-muted' : 'text-brand'}`}
+                                >
+                                    <UsersIcon className="h-3 w-3" />
+                                    {alineado ? 'Cambiar alineación' : 'Alineación'}
+                                </button>
                             )}
                         </div>
                     )

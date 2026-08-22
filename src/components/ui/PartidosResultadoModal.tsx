@@ -43,7 +43,7 @@ interface Partido {
 interface Torneo {
     id: number
     nombre: string
-    modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS'
+    modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS' | 'ATTA_TEAMS'
 }
 interface Props {
     isOpen: boolean
@@ -297,8 +297,8 @@ export default function PartidosResultadoModal({
 
     const numeroBorradores = Object.keys(borradores).length
 
-    // ── Modal para EQUIPOS: lista de partidos de la serie ──
-    if (torneo.modalidad === 'EQUIPOS' && !detalleSeleccionado) {
+    // ── Modal para EQUIPOS/ATTA Teams: lista de partidos de la serie ──
+    if ((torneo.modalidad === 'EQUIPOS' || torneo.modalidad === 'ATTA_TEAMS') && !detalleSeleccionado) {
         return (
             <Modal
                 isOpen
@@ -321,6 +321,12 @@ export default function PartidosResultadoModal({
                 <div className="space-y-2">
                     {seleccionado.detalles.map(detalle => {
                         const finalizado = detalle.estado === 'FINALIZADO'
+                        // Mostramos QUIÉN juega cada cruce para que el
+                        // operador sepa exactamente qué partido está
+                        // registrando sin abrirlo.
+                        const locales = detalle.jugadores.filter(j => j.lado === 'LOCAL').map(j => j.jugadores.nombre)
+                        const visitantes = detalle.jugadores.filter(j => j.lado === 'VISITANTE').map(j => j.jugadores.nombre)
+                        const hayAlineacion = locales.length > 0 && visitantes.length > 0
                         return (
                             <button
                                 key={detalle.id}
@@ -328,8 +334,15 @@ export default function PartidosResultadoModal({
                                 onClick={() => abrirDetalle(detalle)}
                                 className="w-full flex items-center justify-between card-flush px-4 py-3 text-left hover:bg-subtle disabled:opacity-60 disabled:hover:bg-surface transition-colors"
                             >
-                                <span className="font-semibold text-fg">
-                                    {detalle.orden}. {detalle.tipo === 'DOBLES' ? 'Dobles' : 'Individual'}
+                                <span className="min-w-0">
+                                    <span className="block font-semibold text-fg">
+                                        {detalle.orden}. {detalle.tipo === 'DOBLES' ? 'Dobles' : 'Individual'}
+                                    </span>
+                                    <span className={`block text-xs truncate ${hayAlineacion ? 'text-fg-muted' : 'text-warning font-medium'}`}>
+                                        {hayAlineacion
+                                            ? `${locales.join(' / ')} vs ${visitantes.join(' / ')}`
+                                            : 'Sin alineación — usa «Configurar alineación» del grupo'}
+                                    </span>
                                 </span>
                                 <span className={finalizado ? 'text-success font-bold' : 'text-warning font-bold'}>
                                     {finalizado ? `${detalle.sets_local} : ${detalle.sets_visitante}` : 'Registrar'}
@@ -342,8 +355,8 @@ export default function PartidosResultadoModal({
         )
     }
 
-    // ── Modal para EQUIPOS: detalle de un partido individual ──
-    if (torneo.modalidad === 'EQUIPOS' && detalleSeleccionado) {
+    // ── Modal para EQUIPOS/ATTA Teams: detalle de un partido individual ──
+    if ((torneo.modalidad === 'EQUIPOS' || torneo.modalidad === 'ATTA_TEAMS') && detalleSeleccionado) {
         // Las alineaciones se configuran una sola vez por GRUPO en el
         // wizard y se guardan en `detalle.jugadores`. Aquí las mostramos
         // como read-only tag list (sin dropdowns). Si la alineación no

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { ExclamationTriangleIcon, CheckCircleIcon, UserGroupIcon } from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
+import NavegacionModales, { DestinoModal } from '@/components/ui/NavegacionModales'
 import { Select } from '@/components/ui/Select'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
@@ -22,20 +23,21 @@ interface Inscripcion { id?: number; nombrePersonalizado: string; jugadores: Jug
 interface Torneo {
     id: number
     nombre: string
-    modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS'
+    modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS' | 'ATTA_TEAMS'
     abierto?: boolean
     torneo_categorias: { categorias?: Categoria }[]
 }
 
-interface Props { isOpen: boolean; onClose: () => void; torneo: Torneo | null }
+interface Props { isOpen: boolean; onClose: () => void; torneo: Torneo | null; onNavegar?: (destino: DestinoModal) => void }
 
 const etiquetasModalidad = {
     INDIVIDUAL: 'Individual',
     DOBLES: 'Dobles',
-    EQUIPOS: 'Por equipos'
+    EQUIPOS: 'Por equipos',
+    ATTA_TEAMS: 'ATTA Teams'
 }
 
-export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Props) {
+export default function InscripcionTorneoModal({ isOpen, onClose, torneo, onNavegar }: Props) {
     const [categoriaId, setCategoriaId] = useState('')
     const [jugadoresDisponibles, setJugadoresDisponibles] = useState<Jugador[]>([])
     const [inscripciones, setInscripciones] = useState<Inscripcion[]>([])
@@ -67,15 +69,23 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
         [torneo, todasCategorias]
     )
     const modalidad = torneo?.modalidad || 'INDIVIDUAL'
-    // Torneos abiertos: primera, DOBLES, EQUIPOS. En estos casos el
-    // selector de categoría NO se muestra en el modal y la categoría se
-    // infiere de la categoría original de cada jugador al guardar.
+    // Torneos abiertos: primera, DOBLES, EQUIPOS, ATTA_TEAMS. En estos
+    // casos el selector de categoría NO se muestra en el modal y la
+    // categoría se infiere al guardar.
     const esAbierto = Boolean(
         torneo?.abierto ||
         modalidad === 'DOBLES' ||
         modalidad === 'EQUIPOS' ||
+        modalidad === 'ATTA_TEAMS' ||
         categorias.some(c => c.nombre === 'primera')
     )
+    // ATTA Teams: todos los equipos se guardan bajo la categoría ancla
+    // ("primera") para que grupos y llaves mezclen a todos los clubes.
+    const esAttaTeams = modalidad === 'ATTA_TEAMS'
+    const categoriaAnclaId = useMemo(() => {
+        if (!esAttaTeams) return undefined
+        return todasCategorias.find(c => c.nombre === 'primera')?.id ?? todasCategorias[0]?.id
+    }, [esAttaTeams, todasCategorias])
 
     // IDs de jugadores que ya forman parte de inscripciones confirmadas en
     // el panel derecho. Se usan para ocultarlos del selector y para validar
@@ -162,13 +172,22 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
                 ])
                 const dataJugadores = await resJugadores.json()
                 const dataInscritos = await resInscritos.json()
-                const cargadas: Inscripcion[] = (dataInscritos.participantes || []).map((participante: any) => ({
-                    id: participante.id,
-                    nombrePersonalizado: participante.nombre_personalizado || '',
-                    jugadores: participante.miembros?.map((miembro: any) => miembro.jugadores)
-                        || (participante.jugadores ? [participante.jugadores] : []),
-                    categoriaId: participante.categoria_id,
-                }))
+                const cargadas: Inscripcion[] = (dataInscritos.participantes || []).map((participante: any) => {
+                    // OJO: un `miembros: []` vacío es truthy, así que no vale
+                    // el truco `miembros?.map(...) || fallback` (devolvería un
+                    // array sin nombres). Elegimos según si hay miembros reales.
+                    const jugadoresMiembros = (participante.miembros ?? [])
+                        .map((miembro: any) => miembro.jugadores)
+                        .filter(Boolean)
+                    return {
+                        id: participante.id,
+                        nombrePersonalizado: participante.nombre_personalizado || '',
+                        jugadores: jugadoresMiembros.length > 0
+                            ? jugadoresMiembros
+                            : (participante.jugadores ? [participante.jugadores] : []),
+                        categoriaId: participante.categoria_id,
+                    }
+                })
                 setJugadoresDisponibles(dataJugadores.jugadores || [])
                 setInscripciones(cargadas)
                 setInscripcionesIniciales(cargadas)
@@ -206,22 +225,41 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
                 }))
             ])
         } else {
-            const cantidadValida = modalidad === 'EQUIPOS'
+            const esEquipo = modalidad === 'EQUIPOS' || modalidad === 'ATTA_TEAMS'
+            const cantidadValida = esEquipo
                 ? jugadoresEnEdicion.length >= 3
                 : jugadoresEnEdicion.length === 2
 
             if (!cantidadValida) {
-                const mensaje = modalidad === 'EQUIPOS'
+                toast.error(esEquipo
                     ? 'Un equipo debe tener al menos 3 jugadores'
-                    : 'Una pareja debe tener exactamente 2 jugadores'
-                toast.error(mensaje)
+                    : 'Una pareja debe tener exactamente 2 jugadores')
                 return
+            }
+
+            // ATTA Teams: validamos la composición en el cliente para dar
+            // feedback inmediato (el backend la revalida igual).
+            if (modalidad === 'ATTA_TEAMS') {
+                const series = jugadoresEnEdicion.map(j => j.categorias?.nombre)
+                if (series.some(s => !s)) {
+                    toast.error('Hay jugadores sin categoría asignada')
+                    return
+                }
+                const nPrimera = series.filter(s => s === 'primera').length
+                const nSegunda = series.filter(s => s === 'segunda').length
+                const valida = (nPrimera <= 1 && nSegunda <= 1) || (nPrimera === 0 && nSegunda <= 2)
+                if (!valida) {
+                    toast.error('Composición inválida: máx. 1 de primera y 1 de segunda, o sin primera y máx. 2 de segunda (resto de tercera/cuarta)')
+                    return
+                }
             }
 
             setInscripciones(prev => [...prev, {
                 nombrePersonalizado: nombrePersonalizado.trim(),
                 jugadores: jugadoresEnEdicion,
-                categoriaId: esAbierto ? jugadoresEnEdicion[0].categoria_id : Number(categoriaId) || undefined,
+                categoriaId: modalidad === 'ATTA_TEAMS'
+                    ? categoriaAnclaId
+                    : esAbierto ? jugadoresEnEdicion[0].categoria_id : Number(categoriaId) || undefined,
             }])
         }
 
@@ -303,6 +341,7 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
             title={`Inscripciones · ${etiquetasModalidad[modalidad]}`}
             description={torneo.nombre}
             size="2xl"
+            navegacionInferior={<NavegacionModales activo="inscripcion" onNavegar={onNavegar} />}
             footer={
                 <>
                     <div className="flex items-center mr-auto">
@@ -359,8 +398,16 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
 
                 {esAbierto && (
                     <div className="banner banner-info text-xs">
-                        Torneo abierto: puedes inscribir jugadores de cualquier categoría.
-                        Cada jugador se inscribe en su categoría de origen.
+                        {modalidad === 'ATTA_TEAMS' ? (
+                            <>
+                                <b>ATTA Teams:</b> arma equipos mezclando jugadores de todos los clubes.
+                                Composición: máx. 1 de primera y máx. 1 de segunda, o sin primera y
+                                máx. 2 de segunda; el resto debe ser de tercera o cuarta.
+                            </>
+                        ) : (
+                            <>Torneo abierto: puedes inscribir jugadores de cualquier categoría.
+                            Cada jugador se inscribe en su categoría de origen.</>
+                        )}
                     </div>
                 )}
 
@@ -368,7 +415,7 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
                     <div className="card-flush p-4">
                         <div className="mb-3">
                             <h3 className="card-title">
-                                Crear {modalidad === 'EQUIPOS' ? 'equipo' : modalidad === 'DOBLES' ? 'pareja' : 'participante'}
+                                Crear {modalidad === 'EQUIPOS' || modalidad === 'ATTA_TEAMS' ? 'equipo' : modalidad === 'DOBLES' ? 'pareja' : 'participante'}
                             </h3>
                             {modalidad === 'INDIVIDUAL' && (
                                 <p className="card-subtitle mt-1">
@@ -401,7 +448,7 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo }: Prop
                                     ? (jugadoresEnEdicion.length > 1
                                         ? `Añadir ${jugadoresEnEdicion.length} participantes`
                                         : 'Añadir participante')
-                                    : `Añadir ${modalidad === 'EQUIPOS' ? 'equipo' : 'pareja'}`}
+                                    : `Añadir ${modalidad === 'EQUIPOS' || modalidad === 'ATTA_TEAMS' ? 'equipo' : 'pareja'}`}
                             </Button>
                         </div>
                     </div>

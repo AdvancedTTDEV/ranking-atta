@@ -9,6 +9,9 @@ export type CategoriaLite = { id: number; nombre: string }
  * Reglas:
  *   - DOBLES y EQUIPOS: el torneo es "abierto total", se muestran TODAS
  *     las categorías del catálogo ordenadas.
+ *   - ATTA_TEAMS: todo el torneo corre sobre la categoría ancla
+ *     ("primera"); devolvemos SOLO esa para que los modales queden
+ *     fijos en ella sin selector.
  *   - INDIVIDUAL con la categoría "primera" asignada: el selector de
  *     JUGADORES permite elegir de cualquier categoría (inscripción
  *     abierta), pero los grupos/partidos/llaves se corren por categoría.
@@ -22,6 +25,11 @@ export function categoriasParaSelector(
     modalidad?: torneo_modalidad | string,
     _abiertoHint?: boolean,
 ): CategoriaLite[] {
+    if (modalidad === 'ATTA_TEAMS') {
+        const ancla = categoriaAnclaAtta(todasCategorias)
+            ?? categoriaAnclaAtta((torneoCategorias ?? []).map(tc => tc.categorias))
+        return ancla ? [ancla] : []
+    }
     if (esTorneoAbiertoTotal(modalidad)) {
         return todasCategorias
             .slice()
@@ -31,13 +39,23 @@ export function categoriasParaSelector(
 }
 
 /**
+ * Categoría ancla de ATTA Teams: la "primera" del catálogo. Todos los
+ * equipos, grupos y llaves del torneo viven bajo ella sin importar la
+ * serie real de los integrantes.
+ */
+export function categoriaAnclaAtta(categorias: CategoriaLite[]): CategoriaLite | undefined {
+    return categorias.find(c => c.nombre === 'primera')
+}
+
+/**
  * Indica si un torneo es "totalmente abierto": cualquier jugador puede
  * inscribirse y los grupos/partidos/llaves se arman una sola vez sobre la
  * categoría "primera" mezclando a todos los inscritos.
  *
- * Aplica en dos casos:
+ * Aplica en tres casos:
  *   1. Modalidad DOBLES o EQUIPOS (siempre abiertas por convención).
- *   2. INDIVIDUAL con la marca `abierto = true` (creado con el toggle
+ *   2. Modalidad ATTA_TEAMS (equipos mixtos de todos los clubes).
+ *   3. INDIVIDUAL con la marca `abierto = true` (creado con el toggle
  *      "Abierto" del formulario de creación).
  *
  * IMPORTANTE: en INDIVIDUAL sin marca `abierto`, aunque la categoría
@@ -49,7 +67,7 @@ export function esTorneoAbiertoTotal(
     abiertoPersistido?: boolean,
 ): boolean {
     if (abiertoPersistido) return true
-    return modalidad === 'DOBLES' || modalidad === 'EQUIPOS'
+    return modalidad === 'DOBLES' || modalidad === 'EQUIPOS' || modalidad === 'ATTA_TEAMS'
 }
 
 // Orden estable: primera > segunda > tercera > cuarta, y al final cualquier
