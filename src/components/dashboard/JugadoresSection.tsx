@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import JugadorForm from '@/components/forms/JugadorForm';
 import DataTable from '@/components/ui/DataTable';
 import { PlusIcon } from '@heroicons/react/24/outline';
@@ -8,6 +8,9 @@ import { Section } from '@/components/ui/Section';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import toast from 'react-hot-toast';
+import { useRecurso } from '@/app/hooks/useRecurso';
+import Buscador, { useDebounce } from '@/components/ui/Buscador';
 
 type Jugador = {
     id: number;
@@ -22,51 +25,47 @@ type Categoria = {
     nombre: string;
 };
 
+type RankingResponse = {
+    jugadores: Jugador[];
+    total: number;
+};
+
 export default function JugadoresSection({ className = '' }: { className?: string }) {
     const [showForm, setShowForm] = useState(false);
-    const [jugadores, setJugadores] = useState<Jugador[]>([]);
-    const [categorias, setCategorias] = useState<Categoria[]>([]);
     const [selectedCategoriaId, setSelectedCategoriaId] = useState<string>('');
+    const [busqueda, setBusqueda] = useState('');
+    const busquedaDebounce = useDebounce(busqueda);
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(10);
-    const [totalItems, setTotalItems] = useState(0);
-    const [isLoading, setIsLoading] = useState(true);
 
     // edición directa
     const [editingJugadorId, setEditingJugadorId] = useState<number | null>(null);
     const [editingField, setEditingField] = useState<string | null>(null);
     const [editingValue, setEditingValue] = useState<string | number>('');
-    const [selectedClubId, setSelectedClubId] = useState<number | null>(null);
     const [showClubResults, setShowClubResults] = useState(false);
-    const [clubes, setClubes] = useState<{ id: number; nombre: string }[]>([]);
-    const [filteredClubes, setFilteredClubes] = useState<typeof clubes>([]);
 
-    const fetchCategorias = async () => {
-        try {
-            const response = await fetch('/api/categorias');
-            const data = await response.json();
-            setCategorias(data);
-        } catch (error) {
-            console.error('Error fetching categories:', error);
-        }
-    };
+    // Un solo useRecurso por recurso: la URL derivada dispara la carga y
+    // cancela requests viejos al cambiar página/filtro (adiós doble fetch).
+    const { datos, setDatos, isLoading, refresh, actualizar } = useRecurso<RankingResponse>(
+        `/api/ranking?page=${currentPage}&limit=${itemsPerPage}${
+            selectedCategoriaId ? `&categoriaId=${selectedCategoriaId}` : ''
+        }${busquedaDebounce ? `&nombre=${encodeURIComponent(busquedaDebounce)}` : ''}`
+    );
+    const { datos: datosCategorias } = useRecurso<Categoria[]>('/api/categorias');
+    const { datos: datosClubes } = useRecurso<{ clubes: { id: number; nombre: string }[] }>('/api/clubes?all=true');
 
-    const fetchJugadores = async (page: number, limit: number) => {
-        setIsLoading(true);
-        try {
-            const url = `/api/ranking?page=${page}&limit=${limit}${
-                selectedCategoriaId ? `&categoriaId=${selectedCategoriaId}` : ''
-            }`;
-            const res = await fetch(url);
-            const data = await res.json();
-            setJugadores(data.jugadores || []);
-            setTotalItems(data.total || 0);
-        } catch (err) {
-            console.error('Error fetching jugadores:', err);
-        } finally {
-            setIsLoading(false);
-        }
-    };
+    const jugadores = datos?.jugadores ?? [];
+    const totalItems = datos?.total ?? 0;
+    const categorias = datosCategorias ?? [];
+    const clubes = datosClubes?.clubes ?? [];
+    const filteredClubes = clubes.filter((c) =>
+        c.nombre.toLowerCase().includes(String(editingValue).toLowerCase())
+    );
+
+    // Al cambiar el filtro de categoría o la búsqueda, volver a la primera página.
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [selectedCategoriaId, busquedaDebounce]);
 
     const handleEditStart = (jugadorId: number, field: string, currentValue: string | number) => {
         setEditingJugadorId(jugadorId);
@@ -74,47 +73,62 @@ export default function JugadoresSection({ className = '' }: { className?: strin
         setEditingValue(currentValue);
     };
 
-    const handleEditSave = async () => {
-        if (editingJugadorId === null || editingField === null) return;
+    const limpiarEdicion = () => {
+        setEditingJugadorId(null);
+        setEditingField(null);
+        setEditingValue('');
+    };
 
+    interface PatchJugadorArgs {
+        payload: Record<string, unknown>;
+        /** Cómo reflejar el cambio en la fila local (update optimista). */
+        aplicarA?: (j: Jugador) => Partial<Jugador>;
+    }
+
+    /** PATCH con update optimista y rollback en error. */
+    const patchJugador = async (jugadorId: number, { payload, aplicarA }: PatchJugadorArgs, mensajeExito?: string) => {
+        const previo = datos;
+        actualizar(prev =>
+            prev
+                ? {
+                      ...prev,
+                      jugadores: prev.jugadores.map(j => (j.id === jugadorId ? { ...j, ...(aplicarA?.(j) ?? {}) } : j)),
+                  }
+                : prev
+        );
         try {
-            await fetch(`/api/jugadores/${editingJugadorId}`, {
+            const res = await fetch(`/api/jugadores/${jugadorId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ [editingField]: editingValue }),
+                body: JSON.stringify(payload),
             });
-            await fetchJugadores(currentPage, itemsPerPage);
-        } catch (error) {
+            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Error ${res.status}`);
+            if (mensajeExito) toast.success(mensajeExito);
+            return true;
+        } catch (error: any) {
+            setDatos(previo);
             console.error('Error guardando edición:', error);
-        } finally {
-            setEditingJugadorId(null);
-            setEditingField(null);
-            setEditingValue('');
+            toast.error(error.message ?? 'No se pudo guardar');
+            return false;
         }
     };
 
-    useEffect(() => {
-        const fetchClubes = async () => {
-            const res = await fetch('/api/clubes?all=true');
-            const data = await res.json();
-            setClubes(data.clubes);
-            setFilteredClubes(data.clubes);
-        };
-        fetchClubes();
-    }, []);
+    const handleEditSave = async () => {
+        if (editingJugadorId === null || editingField === null) return;
+        const jugadorId = editingJugadorId;
+        const campo = editingField;
+        const valor = editingValue;
 
-    useEffect(() => {
-        fetchCategorias();
-    }, []);
-
-    useEffect(() => {
-        setCurrentPage(1);
-        fetchJugadores(1, itemsPerPage);
-    }, [selectedCategoriaId]);
-
-    useEffect(() => {
-        fetchJugadores(currentPage, itemsPerPage);
-    }, [currentPage, itemsPerPage]);
+        await patchJugador(
+            jugadorId,
+            {
+                payload: { [campo]: valor },
+                aplicarA: () => ({ [campo]: valor } as Partial<Jugador>),
+            },
+            'Jugador actualizado'
+        );
+        limpiarEdicion();
+    };
 
     const columns = [
         {
@@ -122,6 +136,7 @@ export default function JugadoresSection({ className = '' }: { className?: strin
             accessor: 'id',
             sortable: true,
             className: 'w-16 text-fg-muted',
+            ocultarEnMovil: true,
         },
         {
             header: 'Nombre',
@@ -137,6 +152,7 @@ export default function JugadoresSection({ className = '' }: { className?: strin
                             onBlur={handleEditSave}
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter') handleEditSave();
+                                if (e.key === 'Escape') limpiarEdicion();
                             }}
                             className="input-base py-1 text-sm"
                         />
@@ -167,6 +183,7 @@ export default function JugadoresSection({ className = '' }: { className?: strin
                             onBlur={handleEditSave}
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter') handleEditSave();
+                                if (e.key === 'Escape') limpiarEdicion();
                             }}
                             className="input-base py-1 text-sm"
                         />
@@ -187,6 +204,7 @@ export default function JugadoresSection({ className = '' }: { className?: strin
         {
             header: 'Club',
             accessor: 'clubes',
+            ocultarEnMovil: true,
             render: (club: { nombre?: string }, row: Jugador) => {
                 const isEditing = editingJugadorId === row.id && editingField === 'clubes';
 
@@ -196,42 +214,35 @@ export default function JugadoresSection({ className = '' }: { className?: strin
                             type="text"
                             value={editingValue}
                             onChange={(e) => {
-                                const val = e.target.value;
-                                setEditingValue(val);
-                                setFilteredClubes(
-                                    clubes.filter((c) =>
-                                        c.nombre.toLowerCase().includes(val.toLowerCase())
-                                    )
-                                );
+                                setEditingValue(e.target.value);
                                 setShowClubResults(true);
                             }}
                             onFocus={() => setShowClubResults(true)}
                             onBlur={() => setTimeout(() => setShowClubResults(false), 200)}
+                            autoFocus
                             className="input-base py-1 text-sm"
                         />
                         {showClubResults && filteredClubes.length > 0 && (
                             <div className="absolute z-20 mt-1 w-full card-elevated max-h-40 overflow-auto scrollbar-thin py-1">
-                                {filteredClubes.map((club) => (
+                                {filteredClubes.map((clubOpcion) => (
                                     <button
-                                        key={club.id}
+                                        key={clubOpcion.id}
                                         type="button"
                                         onClick={async () => {
-                                            setEditingValue(club.nombre);
-                                            setSelectedClubId(club.id);
                                             setShowClubResults(false);
-
-                                            await fetch(`/api/jugadores/${row.id}`, {
-                                                method: 'PATCH',
-                                                headers: { 'Content-Type': 'application/json' },
-                                                body: JSON.stringify({ club_id: club.id }),
-                                            });
-                                            fetchJugadores(currentPage, itemsPerPage);
-                                            setEditingJugadorId(null);
-                                            setEditingField(null);
+                                            const ok = await patchJugador(
+                                                row.id,
+                                                {
+                                                    payload: { club_id: clubOpcion.id },
+                                                    aplicarA: (j: Jugador) => ({ clubes: { nombre: clubOpcion.nombre } }),
+                                                },
+                                                'Club actualizado'
+                                            );
+                                            if (ok) limpiarEdicion();
                                         }}
                                         className="w-full text-left px-3 py-1.5 text-sm text-fg hover:bg-subtle"
                                     >
-                                        {club.nombre}
+                                        {clubOpcion.nombre}
                                     </button>
                                 ))}
                             </div>
@@ -268,43 +279,51 @@ export default function JugadoresSection({ className = '' }: { className?: strin
             subtitle="Administra la lista de jugadores del club"
             className={className}
             actions={
-                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-                    <Select
-                        value={selectedCategoriaId}
-                        onChange={(e) => setSelectedCategoriaId(e.target.value)}
-                        className="sm:w-48"
+                !showForm && (
+                    <Button
+                        variant="primary"
+                        size="sm"
+                        leadingIcon={<PlusIcon className="h-4 w-4" />}
+                        onClick={() => setShowForm(true)}
+                        disabled={isLoading}
                     >
-                        <option value="">Todas las categorías</option>
-                        {categorias.map((cat) => (
-                            <option key={cat.id} value={cat.id}>
-                                {cat.nombre}
-                            </option>
-                        ))}
-                    </Select>
-                    {!showForm && (
-                        <Button
-                            variant="primary"
-                            size="sm"
-                            leadingIcon={<PlusIcon className="h-4 w-4" />}
-                            onClick={() => setShowForm(true)}
-                            disabled={isLoading}
-                        >
-                            Nuevo
-                        </Button>
-                    )}
-                </div>
+                        Nuevo
+                    </Button>
+                )
             }
         >
             {showForm ? (
                 <JugadorForm
                     onSuccessAction={() => {
                         setShowForm(false);
-                        fetchJugadores(currentPage, itemsPerPage);
+                        refresh();
                     }}
                     onCancelAction={() => setShowForm(false)}
                 />
             ) : (
                 <DataTable
+                    toolbar={
+                        <div className="flex flex-col sm:flex-row gap-2">
+                            <Buscador
+                                valor={busqueda}
+                                onCambiar={setBusqueda}
+                                placeholder="Buscar jugador…"
+                                className="sm:w-56"
+                            />
+                            <Select
+                                value={selectedCategoriaId}
+                                onChange={(e) => setSelectedCategoriaId(e.target.value)}
+                                className="sm:w-48"
+                            >
+                                <option value="">Todas las categorías</option>
+                                {categorias.map((cat) => (
+                                    <option key={cat.id} value={cat.id}>
+                                        {cat.nombre}
+                                    </option>
+                                ))}
+                            </Select>
+                        </div>
+                    }
                     columns={columns}
                     data={jugadores}
                     currentPage={currentPage}

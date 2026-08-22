@@ -1,10 +1,12 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import ClubForm from '@/components/forms/ClubForm'
 import DataTable from '@/components/ui/DataTable'
 import { PlusIcon } from '@heroicons/react/24/outline'
 import { Section } from '@/components/ui/Section'
 import { Button } from '@/components/ui/Button'
+import toast from 'react-hot-toast'
+import { useRecurso } from '@/app/hooks/useRecurso'
 
 type Club = {
     id: number
@@ -19,36 +21,22 @@ type PaginatedResponse = {
 
 export default function ClubesSection() {
     const [showForm, setShowForm] = useState(false)
-    const [clubes, setClubes] = useState<Club[]>([])
     const [currentPage, setCurrentPage] = useState(1)
     const [itemsPerPage, setItemsPerPage] = useState(10)
-    const [totalItems, setTotalItems] = useState(0)
-    const [isLoading, setIsLoading] = useState(false)
 
     // edición directa desde el DT
     const [editingClubId, setEditingClubId] = useState<number | null>(null)
     const [editingField, setEditingField] = useState<string | null>(null)
     const [editingValue, setEditingValue] = useState<string | number>('')
 
-    const fetchClubes = async (page: number, limit: number) => {
-        setIsLoading(true)
-        try {
-            const response = await fetch(`/api/clubes?page=${page}&limit=${limit}`)
-            if (!response.ok) {
-                throw new Error(`Error ${response.status}: ${response.statusText}`)
-            }
-            const data: PaginatedResponse = await response.json()
-            setClubes(data.clubes)
-            setTotalItems(data.total)
-        } catch (error) {
-            console.error('Error fetching clubs:', error)
-        } finally {
-            setIsLoading(false)
-        }
-    }
+    const { datos, setDatos, isLoading, refresh, actualizar } = useRecurso<PaginatedResponse>(
+        `/api/clubes?page=${currentPage}&limit=${itemsPerPage}`
+    )
+    const clubes = datos?.clubes ?? []
+    const totalItems = datos?.total ?? 0
 
-    const handleEditStart = (jugadorId: number, field: string, currentValue: string | number) => {
-        setEditingClubId(jugadorId)
+    const handleEditStart = (clubId: number, field: string, currentValue: string | number) => {
+        setEditingClubId(clubId)
         setEditingField(field)
         setEditingValue(currentValue)
     }
@@ -56,25 +44,39 @@ export default function ClubesSection() {
     const handleEditSave = async () => {
         if (editingClubId === null || editingField === null) return
 
+        const clubId = editingClubId
+        const campo = editingField
+        const valor = editingValue
+
+        // Update optimista: la fila cambia al instante; si falla, se revierte.
+        const previo = datos
+        actualizar(prev =>
+            prev
+                ? {
+                      ...prev,
+                      clubes: prev.clubes.map(c => (c.id === clubId ? { ...c, [campo]: valor } : c)),
+                  }
+                : prev
+        )
+
         try {
-            await fetch(`/api/clubes/${editingClubId}`, {
+            const res = await fetch(`/api/clubes/${clubId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ [editingField]: editingValue }),
+                body: JSON.stringify({ [campo]: valor }),
             })
-            await fetchClubes(currentPage, itemsPerPage)
-        } catch (error) {
+            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Error ${res.status}`)
+            toast.success('Club actualizado')
+        } catch (error: any) {
+            setDatos(previo)
             console.error('Error guardando edición:', error)
+            toast.error(error.message ?? 'No se pudo guardar')
         } finally {
             setEditingClubId(null)
             setEditingField(null)
             setEditingValue('')
         }
     }
-
-    useEffect(() => {
-        fetchClubes(currentPage, itemsPerPage)
-    }, [currentPage, itemsPerPage])
 
     const columns = [
         { header: 'ID', accessor: 'id', sortable: true, className: 'w-16 text-fg-muted' },
@@ -92,6 +94,11 @@ export default function ClubesSection() {
                             onBlur={handleEditSave}
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter') handleEditSave()
+                                if (e.key === 'Escape') {
+                                    setEditingClubId(null)
+                                    setEditingField(null)
+                                    setEditingValue('')
+                                }
                             }}
                             className="input-base py-1 text-sm"
                         />
@@ -137,7 +144,7 @@ export default function ClubesSection() {
                 <ClubForm
                     onSuccessAction={() => {
                         setShowForm(false)
-                        fetchClubes(currentPage, itemsPerPage)
+                        refresh()
                     }}
                     onCancelAction={() => setShowForm(false)}
                 />
