@@ -1138,6 +1138,19 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
             {wizardPartidoId !== null && torneo && (() => {
                 const partido = partidos.find(p => p.id === wizardPartidoId)
                 if (!partido || !partido.participante_local || !partido.participante_visitante) return null
+                // Mapa jugadorId → nombre de equipo: permite decir DE QUÉ
+                // EQUIPO es cada árbitro en la hoja de partidos descargable.
+                // Se busca al árbitro entre los miembros de todos los
+                // participantes cargados del torneo.
+                const equipoDeJugador = new Map<number, string>()
+                for (const p of partidos) {
+                    const registrar = (part: Participante) => {
+                        part.miembros?.forEach(m => equipoDeJugador.set(m.jugador_id, nombreParticipante(part)))
+                        if (part.jugadores) equipoDeJugador.set(part.jugadores.id, nombreParticipante(part))
+                    }
+                    registrar(p.participante_local)
+                    registrar(p.participante_visitante)
+                }
                 return (
                     <EncuentroEquiposWizardModal
                         isOpen
@@ -1155,6 +1168,12 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                         partidos={[{
                             id: partido.id,
                             orden: partido.orden,
+                            arbitro: partido.arbitro
+                                ? {
+                                    nombre: partido.arbitro.nombre,
+                                    equipo: equipoDeJugador.get(partido.arbitro.id) ?? null,
+                                }
+                                : null,
                             detalles: partido.detalles.map(d => ({
                                 id: d.id,
                                 orden: d.orden,
