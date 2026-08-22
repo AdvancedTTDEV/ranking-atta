@@ -1,0 +1,66 @@
+# Backup diario de las bases de datos (dev y prod) hacia artifacts de GitHub.
+#
+# - Corre todos los días a las 09:00 UTC (≈ 3–5 am en México) y también
+#   manualmente desde la pestaña "Run workflow".
+# - Cada dump se comprime (.sql.gz) y sube como artifact con retención de
+#   14 días: Actions → Backup BD → run → Artifacts.
+# - Requiere estos secrets del repo (Settings → Secrets and variables → Actions):
+#     DB_PROD_HOST, DB_PROD_PORT, DB_PROD_USER, DB_PROD_PASSWORD
+#     DB_DEV_HOST,  DB_DEV_PORT,  DB_DEV_USER,  DB_DEV_PASSWORD
+name: Backup BD
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+jobs:
+  backup-prod:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Instalar cliente MySQL
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq mysql-client >/dev/null
+      - name: Volcar base PROD
+        env:
+          DB_HOST: ${{ secrets.DB_PROD_HOST }}
+          DB_PORT: ${{ secrets.DB_PROD_PORT }}
+          DB_USER: ${{ secrets.DB_PROD_USER }}
+          DB_PASS: ${{ secrets.DB_PROD_PASSWORD }}
+        run: |
+          set -euo pipefail
+          TS=$(date +%Y%m%d_%H%M%S)
+          mysqldump --ssl-mode=DISABLED --single-transaction --routines --triggers \
+            -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" railway \
+            | gzip > "backup-prod-${TS}.sql.gz"
+          echo "Tamaño: $(du -h backup-prod-${TS}.sql.gz | cut -f1)"
+          # Verificación rápida: el dump debe terminar en "Dump completed"
+          gunzip -t "backup-prod-${TS}.sql.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backup-prod
+          path: backup-prod-*.sql.gz
+          retention-days: 14
+
+  backup-dev:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Instalar cliente MySQL
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq mysql-client >/dev/null
+      - name: Volcar base DEV
+        env:
+          DB_HOST: ${{ secrets.DB_DEV_HOST }}
+          DB_PORT: ${{ secrets.DB_DEV_PORT }}
+          DB_USER: ${{ secrets.DB_DEV_USER }}
+          DB_PASS: ${{ secrets.DB_DEV_PASSWORD }}
+        run: |
+          set -euo pipefail
+          TS=$(date +%Y%m%d_%H%M%S)
+          mysqldump --ssl-mode=DISABLED --single-transaction --routines --triggers \
+            -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" railway \
+            | gzip > "backup-dev-${TS}.sql.gz"
+          gunzip -t "backup-dev-${TS}.sql.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backup-dev
+          path: backup-dev-*.sql.gz
+          retention-days: 14
