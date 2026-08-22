@@ -17,6 +17,9 @@ export async function POST(req: NextRequest) {
         }
 
         for (const jugador of jugadores) {
+// Forzamos la collation de la sesión a la del ENUM de la tabla
+            // para que las comparaciones internas del SP no mezclen colaciones.
+            await prisma.$executeRawUnsafe(`SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;`)
             await prisma.$executeRaw`
                 CALL cambiar_categoria_jugador(
                     ${Number(jugador.id)},

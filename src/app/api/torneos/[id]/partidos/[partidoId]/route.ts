@@ -127,6 +127,9 @@ export async function PUT(request: Request, { params }: RouteParams) {
                 const jugadorVisitante = participanteVisitante.miembros[0]?.jugador_id ?? participanteVisitante.jugador_id
                 if (!jugadorLocal || !jugadorVisitante) throw new Error('Faltan integrantes del partido individual')
                 const ganadorJugador = ganadorId === partido.participante_local_id ? jugadorLocal : jugadorVisitante
+// Forzamos la collation de la sesión a la del ENUM de la tabla
+                // para que las comparaciones internas del SP no mezclen colaciones.
+                await prisma.$executeRawUnsafe(`SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;`)
                 await tx.$executeRaw`CALL procesar_partido(${jugadorLocal}, ${jugadorVisitante}, ${ganadorJugador}, ${torneoId}, 'Grupos', NULL)`
             }
         }, { maxWait: 10_000, timeout: 30_000 })
@@ -182,6 +185,9 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
                     select: { id: true }
                 })
                 if (!partidoRanking) throw new Error('No se encontró el movimiento de ranking asociado')
+// Forzamos la collation de la sesión a la del ENUM de la tabla
+                // para que las comparaciones internas del SP no mezclen colaciones.
+                await prisma.$executeRawUnsafe(`SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;`)
                 await tx.$executeRaw`CALL revertir_partido(${partidoRanking.id})`
             }
 

@@ -73,6 +73,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const visitante = partido.participante_visitante.miembros[0]?.jugador_id ?? partido.participante_visitante.jugador_id
       const ganador = Number(ganadorParticipanteId) === partido.participante_local_id ? local : visitante
       if (!local || !visitante || !ganador) return NextResponse.json({ error: 'Faltan jugadores' }, { status: 400 })
+// Forzamos la collation de la sesión a la del ENUM de la tabla
+      // para que las comparaciones internas del SP no mezclen colaciones.
+      await prisma.$executeRawUnsafe(`SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;`)
       await prisma.$executeRaw`CALL procesar_partido(${local}, ${visitante}, ${ganador}, ${torneoId}, ${rondaSp}, NULL)`
     }
     await prisma.torneo_partidos_programados.update({ where: { id: partido.id }, data: { ganador_participante_id: Number(ganadorParticipanteId), estado: 'FINALIZADO' } })
