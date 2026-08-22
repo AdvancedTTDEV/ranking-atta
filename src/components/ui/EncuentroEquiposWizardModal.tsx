@@ -3,14 +3,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
     ArrowLeftIcon, ArrowRightIcon, CheckCircleIcon, MagnifyingGlassIcon, XMarkIcon, UsersIcon, TrophyIcon,
-    ArrowDownTrayIcon, ExclamationTriangleIcon,
+    PrinterIcon, ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { toast } from 'react-hot-toast'
 import {
-    descargarHojaPartidosPng,
+    imprimirHojaPartidos,
     type LetrasHoja, type JugadorHoja,
 } from '@/lib/torneo/hojaPartidos'
 import {
@@ -96,10 +96,10 @@ export default function EncuentroEquiposWizardModal({
     /** Asignación de jugadores por letra, para el equipo ABC y XYZ. */
     const [asignacion, setAsignacion] = useState<Asignacion>({ abc: {}, xyz: {} })
     const [guardando, setGuardando] = useState(false)
-    const [descargandoHoja, setDescargandoHoja] = useState(false)
-    /** true = la descarga automática tras guardar falló y el wizard
-     *  permanece abierto para reintentarla con el botón manual. */
-    const [descargaFallida, setDescargaFallida] = useState(false)
+    /** true = la impresión automática tras guardar falló (popup
+     *  bloqueado) y el wizard permanece abierto para reintentarla con
+     *  el botón manual. */
+    const [impresionFallida, setImpresionFallida] = useState(false)
 
     // Solo 3 letras por lado (A/B/C y X/Y/Z). Esto es independiente de la
     // modalidad: DOBLES usa 2 de las 3 letras y EQUIPOS las usa todas.
@@ -111,7 +111,7 @@ export default function EncuentroEquiposWizardModal({
     useEffect(() => {
         if (!isOpen) return
         setStep('seleccion-lado')
-        setDescargaFallida(false)
+        setImpresionFallida(false)
         // La elección ABC/XYZ es SIEMPRE explícita: el operador decide
         // qué equipo lleva las letras A/B/C según las hojas de los
         // capitanes. No pre-seleccionamos nada.
@@ -273,17 +273,22 @@ export default function EncuentroEquiposWizardModal({
                     : `Alineación guardada para ${aplicables.length} partidos del grupo`
                         + (omitidos > 0 ? ` (${omitidos} de otros cruces omitidos)` : ''),
             )
-            // Último paso: la hoja de partidos se descarga SOLA. Si el
-            // navegador/imagen falla, NO cerramos el wizard: queda un
-            // aviso y el botón «Descargar hoja de partidos» a la vista
-            // para reintentar antes de salir.
+            // Último paso: el diálogo de impresión de la hoja se abre
+            // SOLO. Si el navegador bloquea la ventana, NO cerramos el
+            // wizard: queda un aviso y el botón «Imprimir hoja de
+            // partidos» a la vista para reintentar antes de salir.
             try {
-                await generarHojaPartidos()
-                toast.success('Hoja de partidos descargada')
+                if (!generarHojaPartidos()) {
+                    setImpresionFallida(true)
+                    toast.error('La alineación se guardó, pero el navegador bloqueó la impresión — usa «Imprimir hoja de partidos»')
+                    onGuardado?.()
+                    return
+                }
+                toast.success('Hoja enviada a impresión')
             } catch (error) {
-                console.error('Descarga automática de la hoja falló:', error)
-                toast.error('La alineación se guardó, pero la hoja no se descargó — usa «Descargar hoja de partidos»')
-                setDescargaFallida(true)
+                console.error('Impresión automática de la hoja falló:', error)
+                toast.error('La alineación se guardó, pero la hoja no se pudo imprimir — usa «Imprimir hoja de partidos»')
+                setImpresionFallida(true)
                 onGuardado?.()
                 return
             }
@@ -299,14 +304,14 @@ export default function EncuentroEquiposWizardModal({
     }
 
     /**
-     * Genera y descarga la **Hoja de partidos** del encuentro como PNG
-     * (mismo formato carta que la hoja impresa): los juegos a disputar
-     * con la etiqueta del cruce («A vs X», «B+C vs Y+Z»), los nombres
-     * reales por lado y el árbitro de cada encuentro con su equipo.
-     * Usa el estado ACTUAL del wizard: no requiere haber guardado.
-     * Lanza si el render/descarga falla — los callers deciden el UX.
+     * Abre el **diálogo de impresión** con la Hoja de partidos del
+     * encuentro (carta vertical): los juegos a disputar con la etiqueta
+     * del cruce («A vs X», «B+C vs Y+Z»), los nombres reales por lado y
+     * el árbitro de cada encuentro con su equipo. Usa el estado ACTUAL
+     * del wizard: no requiere haber guardado.
+     * Devuelve false si el navegador bloqueó la ventana de impresión.
      */
-    const generarHojaPartidos = async () => {
+    const generarHojaPartidos = (): boolean => {
         if (!ladoAbc) throw new Error('Sin lado ABC elegido')
         const equipoAbc = ladoAbc === 'visitante' ? equipos.visitante : equipos.local
         const equipoXyz = ladoAbc === 'visitante' ? equipos.local : equipos.visitante
@@ -326,7 +331,7 @@ export default function EncuentroEquiposWizardModal({
             const j = id ? poolXyz.find(x => x.id === id) : undefined
             if (j) xyz[letra] = aJugador(j)
         }
-        await descargarHojaPartidosPng({
+        return imprimirHojaPartidos({
             torneoNombre: torneo.nombre,
             categoria,
             modalidad,
@@ -338,19 +343,18 @@ export default function EncuentroEquiposWizardModal({
         })
     }
 
-    /** Handler del botón manual: envuelve la generación con estado de
-     *  carga y toasts. Sirve de respaldo si la descarga automática que
-     *  corre al guardar falló, o para bajar otra copia antes de salir. */
-    const descargarHojaPartidos = async () => {
-        setDescargandoHoja(true)
+    /** Handler del botón manual: abre el diálogo de impresión con la
+     *  hoja, como respaldo si la automática falló o para imprimir otra
+     *  copia antes de salir. */
+    const imprimirHoja = () => {
         try {
-            await generarHojaPartidos()
-            toast.success('Hoja de partidos descargada')
+            if (!generarHojaPartidos()) {
+                toast.error('El navegador bloqueó la ventana de impresión — permite las ventanas emergentes para este sitio')
+                return
+            }
         } catch (error) {
-            console.error('Error al descargar la hoja de partidos:', error)
-            toast.error('Error al generar la imagen')
-        } finally {
-            setDescargandoHoja(false)
+            console.error('Error al imprimir la hoja de partidos:', error)
+            toast.error('No se pudo generar la hoja')
         }
     }
 
@@ -401,12 +405,11 @@ export default function EncuentroEquiposWizardModal({
                             <>
                                 <Button
                                     variant="secondary"
-                                    onClick={descargarHojaPartidos}
-                                    isLoading={descargandoHoja}
-                                    leadingIcon={<ArrowDownTrayIcon className="h-4 w-4" />}
-                                    title="Descarga la hoja con los juegos a disputar, los nombres por lado y el árbitro de cada encuentro"
+                                    onClick={imprimirHoja}
+                                    leadingIcon={<PrinterIcon className="h-4 w-4" />}
+                                    title="Abre el diálogo de impresión con los juegos a disputar, los nombres por lado y el árbitro de cada encuentro"
                                 >
-                                    Descargar hoja de partidos
+                                    Imprimir hoja de partidos
                                 </Button>
                                 <Button
                                     variant="primary"
@@ -423,12 +426,12 @@ export default function EncuentroEquiposWizardModal({
             }
         >
             <Stepper step={step} />
-            {step === 'revisar-matchups' && descargaFallida && (
+            {step === 'revisar-matchups' && impresionFallida && (
                 <div className="mt-4 banner banner-warning text-xs flex items-center gap-2">
                     <ExclamationTriangleIcon className="h-4 w-4 text-warning shrink-0" />
                     <span>
-                        La alineación <b>se guardó</b>, pero la hoja de partidos no se pudo descargar
-                        automáticamente. Usa el botón <b>«Descargar hoja de partidos»</b> para intentarlo de nuevo.
+                        La alineación <b>se guardó</b>, pero la hoja no se pudo imprimir
+                        automáticamente. Usa el botón <b>«Imprimir hoja de partidos»</b> para intentarlo de nuevo.
                     </span>
                 </div>
             )}

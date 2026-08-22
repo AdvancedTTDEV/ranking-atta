@@ -13,7 +13,7 @@
  *    en BD con `alineacionDesdeDetalles` (convención LOCAL = ABC, igual a
  *    como el wizard relee las alineaciones guardadas).
  */
-import { descargarPngDeDoc, type DocImpresion } from '@/lib/documentos-torneo'
+import { abrirImpresion, type DocImpresion } from '@/lib/documentos-torneo'
 import {
     MATCHUPS_DOBLES, MATCHUPS_EQUIPOS,
     type LetraLocal, type LetraVisitante,
@@ -45,10 +45,6 @@ const escaparHtml = (texto: string) =>
     texto.replace(/[&<>"']/g, c => (
         { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c] || c
     ))
-
-export const slugArchivo = (texto: string) =>
-    texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase()
 
 interface DetalleAlineacion {
     orden: number
@@ -154,8 +150,11 @@ export function construirDocHojaPartidos({
             html,body{margin:0;padding:0;background:#ffffff}
             body{font-family:Arial,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased}
             /* Tamaño carta exacto: 850×1100 px = 8.5×11 pulgadas (100 px/in),
-               capturado a pixelRatio 2 → PNG 1700×2200 (200 DPI). */
+               capturado a pixelRatio 2 → PNG 1700×2200 (200 DPI).
+               Al IMPRIMIR, el papel manda: la hoja se vuelve fluida para
+               que quepa en carta con los márgenes de @page. */
             .hoja{background:#ffffff;padding:36px 42px;width:850px;height:1100px;display:flex;flex-direction:column}
+            @media print{.hoja{width:100%;height:auto;padding:0}}
             .cabecera{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 8px 10px;border-bottom:2.5px solid #0f172a}
             .logo{height:58px;object-fit:contain}
             .titulo-central{flex:1;text-align:center}
@@ -260,13 +259,9 @@ export function construirDocHojaPartidos({
     }
 }
 
-/** Genera el PNG de la hoja y dispara su descarga (iOS-safe vía descargarArchivo). */
-export async function descargarHojaPartidosPng(params: HojaPartidosParams): Promise<void> {
-    const doc = construirDocHojaPartidos(params)
-    await descargarPngDeDoc(
-        doc,
-        850,
-        `hoja-partidos-${slugArchivo(params.nombreEquipoAbc)}-vs-${slugArchivo(params.nombreEquipoXyz)}.png`,
-        '#ffffff',
-    )
+/** Abre el diálogo de impresión del navegador con la hoja (carta
+ *  vertical; desde ahí también se puede guardar como PDF). Devuelve
+ *  false si el navegador bloqueó la ventana emergente. */
+export function imprimirHojaPartidos(params: HojaPartidosParams): boolean {
+    return abrirImpresion(construirDocHojaPartidos(params))
 }

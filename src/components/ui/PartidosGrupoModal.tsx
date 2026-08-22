@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-    ArrowDownTrayIcon,
+    PrinterIcon,
     ChevronLeftIcon,
     ChevronRightIcon,
     ExclamationTriangleIcon,
@@ -86,10 +86,8 @@ interface Props {
     onSelectPartido: (partidoId: number) => void
     /** Abre el wizard de alineación para UN partido (modalidades por equipos). */
     onConfigurarAlineacionPartido?: (partidoId: number) => void
-    /** Descarga la hoja de partidos (PNG) del encuentro SIN abrir el wizard. */
-    onDescargarHojaPartido?: (partidoId: number) => void
-    /** ID del partido cuya hoja se está generando (estado de carga en su botón). */
-    descargandoHojaId?: number | null
+    /** Abre el diálogo de impresión de la hoja de partidos del encuentro. */
+    onImprimirHojaPartido?: (partidoId: number) => void
     indiceGrupo: number
     totalGrupos: number
     onPrevGrupo: () => void
@@ -106,8 +104,7 @@ export default function PartidosGrupoModal({
     borradores,
     onSelectPartido,
     onConfigurarAlineacionPartido,
-    onDescargarHojaPartido,
-    descargandoHojaId,
+    onImprimirHojaPartido,
     indiceGrupo,
     totalGrupos,
     onPrevGrupo,
@@ -252,7 +249,6 @@ export default function PartidosGrupoModal({
                     const esArrastrable = permiteReordenar && !finalizado
                     const esDragOver = dragOverId === partido.id && draggingId !== null && draggingId !== partido.id
                     const arrastrandoEste = draggingId === partido.id
-                    const descargandoEstaHoja = descargandoHojaId === partido.id
                     // Estado de alineación: todos los sub-partidos tienen
                     // jugadores en ambos lados.
                     const alineado = (partido.detalles ?? []).length > 0
@@ -313,24 +309,19 @@ export default function PartidosGrupoModal({
                                         <BloqueEquipo participante={partido.participante_visitante} />
                                     </div>
                                 </button>
-                                {/* Descargar hoja de partidos sin abrir el wizard */}
-                                {onDescargarHojaPartido && (
+                                {/* Imprimir hoja de partidos sin abrir el wizard */}
+                                {onImprimirHojaPartido && (
                                     <button
                                         type="button"
-                                        title="Descargar hoja de partidos (PNG)"
-                                        aria-label={`Descargar hoja de partidos del encuentro #${partido.orden}`}
-                                        disabled={descargandoEstaHoja}
+                                        title="Imprimir hoja de partidos"
+                                        aria-label={`Imprimir hoja de partidos del encuentro #${partido.orden}`}
                                         onClick={(e) => {
                                             e.stopPropagation()
-                                            onDescargarHojaPartido(partido.id)
+                                            onImprimirHojaPartido(partido.id)
                                         }}
-                                        className={`self-center shrink-0 inline-flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${
-                                            descargandoEstaHoja
-                                                ? 'border-brand bg-brand-soft text-brand animate-pulse'
-                                                : 'border-line text-fg-muted hover:text-brand hover:bg-brand-soft'
-                                        }`}
+                                        className="self-center shrink-0 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line text-fg-muted transition-colors hover:text-brand hover:bg-brand-soft"
                                     >
-                                        <ArrowDownTrayIcon className="h-5 w-5" aria-hidden="true" />
+                                        <PrinterIcon className="h-5 w-5" aria-hidden="true" />
                                     </button>
                                 )}
                             </div>
