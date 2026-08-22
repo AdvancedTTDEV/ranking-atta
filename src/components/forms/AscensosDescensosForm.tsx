@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useMemo } from 'react'
 import { toast } from 'react-hot-toast'
+import { fetchCache } from '@/lib/fetchCache'
 import Modal from '@/components/ui/Modal'
 import PlayerSelector from '@/components/ui/PlayerSelector'
 import { Button } from '@/components/ui/Button'
@@ -73,9 +74,8 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
     useEffect(() => {
         const fetchCategorias = async () => {
             try {
-                const res = await fetch('/api/categorias')
-                const data = await res.json()
-                setCategorias(data)
+                const data = await fetchCache<never[]>('/api/categorias')
+                setCategorias(data as never)
             } catch (error) {
                 console.error(error)
                 toast.error('Error al obtener categorías')
@@ -107,8 +107,7 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
         }
         const fetchJugadores = async () => {
             try {
-                const res = await fetch(`/api/jugadores?all=true&categoriaId=${selectedCategoriaId}`)
-                const data = await res.json()
+                const data = await fetchCache<{ jugadores: never[] }>(`/api/jugadores?all=true&categoriaId=${selectedCategoriaId}`)
                 setJugadores(data.jugadores)
             } catch (error) {
                 console.error(error)

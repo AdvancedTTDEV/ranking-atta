@@ -8,7 +8,6 @@ import {
     TrophyIcon,
     ChartBarIcon,
     DocumentTextIcon,
-    ArrowsUpDownIcon,
 } from '@heroicons/react/24/outline'
 import { useSession, signOut } from 'next-auth/react'
 import { ArrowRightOnRectangleIcon } from '@heroicons/react/24/outline'
@@ -22,7 +21,6 @@ const navigation = [
     { name: 'Torneos', href: '/dashboard/torneos', icon: TrophyIcon },
     { name: 'Partidos', href: '/dashboard/partidos', icon: DocumentTextIcon },
     { name: 'Clubes', href: '/dashboard/clubes', icon: HomeIcon },
-    { name: 'Categorías', href: '/dashboard/categorias', icon: ArrowsUpDownIcon },
     { name: 'Estadísticas', href: '/dashboard/estadisticas', icon: ChartBarIcon },
 ]
 

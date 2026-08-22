@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { Section } from '@/components/ui/Section'
 import { StatTile } from '@/components/ui/StatTile'
 import { chartPalette } from '@/lib/design-tokens'
+import { fetchCache, obtenerCache } from '@/lib/fetchCache'
 import {
     UserGroupIcon,
     TrophyIcon,
@@ -80,31 +81,21 @@ export default function EstadisticasSection({ className = '' }) {
 
     useEffect(() => {
         const fetchStats = async () => {
-            setLoading(true)
+            // Con caché SWR: primera visita carga de red; revisitas pinta al
+            // instante y revalida por detrás.
+            if (!obtenerCache('/api/estadisticas/elo-por-categoria')) setLoading(true)
             try {
-                const [jugadoresRes, torneosRes, partidosRes, eloRes, clubesRes] = await Promise.all([
-                    fetch('/api/jugadores?limit=1000'),
-                    fetch('/api/torneos?limit=1000'),
-                    fetch('/api/partidos?limit=1000'),
-                    fetch('/api/estadisticas/elo-por-categoria'),
-                    fetch('/api/estadisticas/jugadores-por-club')
+                const [jugadoresData, torneosData, partidosData, eloData, clubesData] = await Promise.all([
+                    fetchCache<{ jugadores?: { id?: number }[] }>('/api/jugadores?limit=1000'),
+                    fetchCache<{ torneos?: Torneo[] } | Torneo[]>('/api/torneos?limit=1000'),
+                    fetchCache<{ partidos?: Partido[] } | Partido[]>('/api/partidos?limit=1000'),
+                    fetchCache<EloPorCategoria[]>('/api/estadisticas/elo-por-categoria'),
+                    fetchCache<JugadoresPorClub[]>('/api/estadisticas/jugadores-por-club')
                 ])
 
-                if (!jugadoresRes.ok) throw new Error('Error fetching jugadores')
-                if (!torneosRes.ok) throw new Error('Error fetching torneos')
-                if (!partidosRes.ok) throw new Error('Error fetching partidos')
-                if (!eloRes.ok) throw new Error('Error fetching elo data')
-                if (!clubesRes.ok) throw new Error('Error fetching clubes data')
-
-                const jugadoresData = await jugadoresRes.json()
-                const torneosData = await torneosRes.json()
-                const partidosData = await partidosRes.json()
-                const eloData: EloPorCategoria[] = await eloRes.json()
-                const clubesData: JugadoresPorClub[] = await clubesRes.json()
-
-                const jugadoresArray = jugadoresData.jugadores || []
-                const torneosArray = torneosData.torneos || torneosData
-                const partidosArray = partidosData.partidos || partidosData
+                const jugadoresArray = (jugadoresData as { jugadores?: { id?: number }[] }).jugadores || []
+                const torneosArray = ((torneosData as { torneos?: Torneo[] }).torneos || torneosData) as Torneo[]
+                const partidosArray = ((partidosData as { partidos?: Partido[] }).partidos || partidosData) as Partido[]
 
                 const partidosPorTorneo: PartidosPorTorneo[] = torneosArray.map((torneo: Torneo) => {
                     const count = partidosArray.filter((p: Partido) => p.torneo_id === torneo.id).length

@@ -12,15 +12,19 @@ import {
     Bars3Icon,
     TrophyIcon,
     CheckIcon,
+    PrinterIcon,
 } from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
+import { fetchCache, obtenerCache, precargar } from '@/lib/fetchCache'
+import NavegacionModales, { DestinoModal } from '@/components/ui/NavegacionModales'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
+import { abrirImpresion, construirDocGrupos, descargarPngDeDoc, prefiereModoOscuro } from '@/lib/documentos-torneo'
 
 interface Club { id: number; nombre: string }
-interface Jugador { id: number; nombre: string; elo: number | null; clubes?: Club }
+interface Jugador { id: number; nombre: string; elo: number | null; clubes?: Club; categorias?: { nombre: string } }
 interface Miembro { orden: number; jugadores: Jugador }
 interface TorneoParticipante {
     id: number
@@ -39,6 +43,8 @@ interface GruposTorneoModalProps {
     onClose: () => void
     torneo: Torneo | null
     onOpenPartidos?: () => void
+    /** Barra inferior para saltar entre modales del torneo. */
+    onNavegar?: (destino: DestinoModal) => void
 }
 
 type Modo = 'auto' | 'manual'
@@ -118,7 +124,7 @@ const clubParticipante = (p: TorneoParticipante): string | null => {
     return cs.join(' / ')
 }
 
-export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenPartidos }: GruposTorneoModalProps) {
+export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenPartidos, onNavegar }: GruposTorneoModalProps) {
     const [selectedCategoriaId, setSelectedCategoriaId] = useState<string>('')
     const [grupos, setGrupos] = useState<TorneoGrupo[]>([])
     const [isLoading, setIsLoading] = useState(false)
@@ -147,7 +153,6 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
     const [swapMenu, setSwapMenu] = useState<{ grupoId: number; participanteId: number } | null>(null)
     const [poolMenu, setPoolMenu] = useState<number | null>(null) // torneo_participante_id del pool
 
-    const gruposRef = useRef<HTMLDivElement>(null)
     const tempIdCounter = useRef(-1)
     const [todasCategorias, setTodasCategorias] = useState<Categoria[]>([])
 
@@ -173,6 +178,7 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
     // Un INDIVIDUAL con la marca `abierto = true` también es totalmente
     // abierto: oculta el selector y mezcla todos los inscritos.
     const esAbierto = esTorneoAbiertoTotal(torneo?.modalidad, torneo?.abierto)
+    const esEquipo = torneo?.modalidad === 'DOBLES' || torneo?.modalidad === 'EQUIPOS' || torneo?.modalidad === 'ATTA_TEAMS'
     const categoriaOperativa = esAbierto
         ? (todasCategorias.find(c => c.nombre === 'primera') || categoriasDelTorneo[0])
         : categoriasDelTorneo.find(c => c.id.toString() === selectedCategoriaId) || categoriasDelTorneo[0]
@@ -201,15 +207,19 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
         }
     }, [torneo, esAbierto, todasCategorias])
 
-    const fetchGrupos = async () => {
+    const urlGrupos = (catId: string) => `/api/torneos/${torneo?.id}/grupos?categoriaId=${catId}`
+
+    const fetchGrupos = async (forzar = false) => {
         if (!torneo || !categoriaOperativaId) return
-        setIsLoading(true)
-        setHasChanges(false)
+        const url = urlGrupos(categoriaOperativaId)
+        // Con copia en caché pinta al instante: cero spinner al alternar.
+        if (forzar || !obtenerCache(url)) {
+            setIsLoading(true)
+            setHasChanges(false)
+        }
         try {
-            const res = await fetch(`/api/torneos/${torneo.id}/grupos?categoriaId=${categoriaOperativaId}`)
-            const data = await res.json()
-            if (res.ok) setGrupos(data.grupos || [])
-            else toast.error(data.error || 'Error al obtener grupos')
+            const data = await fetchCache<{ grupos?: never[] }>(url, { forzar })
+            setGrupos((data.grupos || []) as never[])
         } catch {
             toast.error('Error de red al cargar grupos')
         } finally {
@@ -220,23 +230,32 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
     // En torneos abiertos listamos TODOS los inscritos del torneo (sin
     // filtrar por su categoría de origen), porque los grupos mezclan a
     // todos bajo la categoría operativa "primera".
-    const fetchInscritos = async () => {
+    const fetchInscritos = async (forzar = false) => {
         if (!torneo) return
-        setIsLoadingInscritos(true)
+        const url = esAbierto
+            ? `/api/torneos/${torneo.id}/participantes`
+            : `/api/torneos/${torneo.id}/participantes?categoriaId=${categoriaOperativaId}`
+        if (forzar || !obtenerCache(url)) setIsLoadingInscritos(true)
         try {
-            const url = esAbierto
-                ? `/api/torneos/${torneo.id}/participantes`
-                : `/api/torneos/${torneo.id}/participantes?categoriaId=${categoriaOperativaId}`
-            const res = await fetch(url)
-            const data = await res.json()
-            if (res.ok) setInscritos(data.participantes || [])
-            else toast.error(data.error || 'Error al obtener inscritos')
+            const data = await fetchCache<{ participantes?: never[] }>(url, { forzar })
+            setInscritos((data.participantes || []) as never[])
         } catch {
             toast.error('Error de red al cargar inscritos')
         } finally {
             setIsLoadingInscritos(false)
         }
     }
+
+    // Precarga silenciosa de TODAS las categorías al abrir el modal:
+    // cambiar de opción pinta desde la caché sin esperar la BD.
+    useEffect(() => {
+        if (!isOpen || !torneo || categoriasDelTorneo.length === 0) return
+        precargar(
+            `/api/torneos/${torneo.id}/participantes`,
+            ...categoriasDelTorneo.map(c => urlGrupos(String(c.id)))
+        )
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen, torneo, categoriasDelTorneo])
 
     useEffect(() => {
         if (isOpen && categoriaOperativaId) {
@@ -261,7 +280,7 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
             const data = await res.json()
             if (res.ok) {
                 toast.success('Grupos generados exitosamente')
-                fetchGrupos()
+                fetchGrupos(true)
             } else {
                 toast.error(data.error || 'Error al generar los grupos')
             }
@@ -489,8 +508,8 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
             if (res.ok) {
                 toast.success('Cambios guardados correctamente')
                 setHasChanges(false)
-                fetchGrupos()
-                fetchInscritos()
+                fetchGrupos(true)
+                fetchInscritos(true)
             } else {
                 const data = await res.json()
                 toast.error(data.error || 'Error al guardar')
@@ -508,23 +527,34 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
     }
 
     const handleDescargar = async () => {
-        if (!gruposRef.current) return
+        if (!torneo || grupos.length === 0) return
         setIsDownloading(true)
         try {
-            const { toPng } = await import('html-to-image')
-            const originalError = console.error
-            console.error = (...args) => { if (String(args[0]).includes('cssRules')) return; originalError(...args) }
-            const dataUrl = await toPng(gruposRef.current, {
-                backgroundColor: '#f8fafc',
-                pixelRatio: 2,
-                skipFonts: true,
-                filter: (node) => !(node instanceof HTMLLinkElement && node.rel === 'stylesheet')
+            // El "screenshot" sale con el modo de la compu (oscuro/claro).
+            const oscuro = prefiereModoOscuro()
+            const doc = construirDocGrupos({
+                torneoNombre: torneo.nombre,
+                categoriaNombre: categoriaActual?.nombre ?? '',
+                esEquipo,
+                palabraParticipantes: torneo.modalidad === 'DOBLES' ? 'parejas' : esEquipo ? 'equipos' : 'jugadores',
+                oscuro,
+                grupos: grupos.map(grupo => ({
+                    numero: grupo.numero_grupo,
+                    participantes: grupo.participantes.map(p => {
+                        const tp = p.torneo_participantes
+                        return {
+                            nombre: nombreParticipante(tp),
+                            club: clubParticipante(tp),
+                            idIndividual: tp.jugadores?.id ?? tp.miembros[0]?.jugadores.id ?? null,
+                            integrantes: tp.miembros.map(m => ({
+                                nombre: m.jugadores.nombre,
+                                serie: m.jugadores.categorias?.nombre ?? null,
+                            })),
+                        }
+                    }),
+                })),
             })
-            console.error = originalError
-            const link = document.createElement('a')
-            link.download = `grupos-${torneo?.nombre}-cat${categoriaOperativaId}.png`
-            link.href = dataUrl
-            link.click()
+            await descargarPngDeDoc(doc, 1100, `grupos-${torneo.nombre}-cat${categoriaOperativaId}.png`, oscuro ? '#0B1120' : '#ffffff')
             toast.success('Imagen descargada')
         } catch (error) {
             console.error('Error al descargar:', error)
@@ -532,6 +562,34 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
         } finally {
             setIsDownloading(false)
         }
+    }
+
+    const handleImprimir = () => {
+        if (!torneo || grupos.length === 0) return
+        // Papel: siempre versión clara.
+        const doc = construirDocGrupos({
+            torneoNombre: torneo.nombre,
+            categoriaNombre: categoriaActual?.nombre ?? '',
+            esEquipo,
+            palabraParticipantes: torneo.modalidad === 'DOBLES' ? 'parejas' : esEquipo ? 'equipos' : 'jugadores',
+            oscuro: false,
+            grupos: grupos.map(grupo => ({
+                numero: grupo.numero_grupo,
+                participantes: grupo.participantes.map(p => {
+                    const tp = p.torneo_participantes
+                    return {
+                        nombre: nombreParticipante(tp),
+                        club: clubParticipante(tp),
+                        idIndividual: tp.jugadores?.id ?? tp.miembros[0]?.jugadores.id ?? null,
+                        integrantes: tp.miembros.map(m => ({
+                            nombre: m.jugadores.nombre,
+                            serie: m.jugadores.categorias?.nombre ?? null,
+                        })),
+                    }
+                }),
+            })),
+        })
+        if (!abrirImpresion(doc)) toast.error('El navegador bloqueó la ventana de impresión')
     }
 
     if (!isOpen || !torneo) return null
@@ -546,6 +604,7 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
             title="Grupos del torneo"
             description={torneo.nombre}
             size="full"
+            navegacionInferior={<NavegacionModales activo="grupos" onNavegar={onNavegar} />}
         >
             <div className="-mx-5 -mt-5 mb-4 card-flush overflow-hidden">
                 <div className="flex flex-col sm:flex-row items-end gap-3 p-3 bg-subtle">
@@ -644,6 +703,15 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                                 leadingIcon={<TrophyIcon className="h-4 w-4" />}
                             >
                                 Partidos y hojas
+                            </Button>
+                        )}
+                        {grupos.length > 0 && (
+                            <Button
+                                variant="secondary"
+                                onClick={handleImprimir}
+                                leadingIcon={<PrinterIcon className="h-4 w-4" />}
+                            >
+                                Imprimir
                             </Button>
                         )}
                         {grupos.length > 0 && (
@@ -753,7 +821,16 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                         </p>
                     </div>
                 ) : (
-                    <div ref={gruposRef} className="bg-subtle rounded-xl p-5">
+                    <>
+                        {/* Guía de la etapa de grupos: siempre visible. */}
+                        <div className="banner banner-info mb-4 text-xs leading-relaxed">
+                            <span>
+                                <b>Armado de grupos:</b>{' '}
+                                <b>1.</b> «Generar grupos» (o añádelos a mano en modo Manual) → <b>2.</b> Ajusta arrastrando si quieres →{' '}
+                                <b>3.</b> «Guardar cambios» → <b>4.</b> «Partidos y hojas» para generar los cruces e imprimir las hojas.
+                            </span>
+                        </div>
+                        <div className="bg-subtle rounded-xl p-5">
                         <div className="text-center mb-5">
                             <h3 className="text-xl font-bold text-fg">{torneo.nombre}</h3>
                             <p className="text-sm text-fg-muted">Categoría {categoriaActual?.nombre} — Distribución de Grupos</p>
@@ -883,12 +960,13 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                                             </ul>
                                         )}
                                     </div>
-                                )
-                            })}
-                        </div>
-                    </div>
-                )}
-            </div>
+                                 )
+                             })}
+                         </div>
+                     </div>
+                     </>
+                 )}
+             </div>
 
             <div className="-mx-5 -mb-5 mt-4 px-5 py-3 border-t border-line flex justify-between items-center bg-subtle rounded-b-xl">
                 <span className="text-sm text-fg-muted inline-flex items-center gap-2">

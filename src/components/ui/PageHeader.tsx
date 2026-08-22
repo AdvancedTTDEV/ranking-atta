@@ -9,7 +9,7 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, subtitle, actions, className = '' }: PageHeaderProps) {
     return (
-        <div className={`page-header ${actions ? 'page-header-row' : ''} ${className}`.trim()}>
+        <div className={`page-header animate-slide-up ${actions ? 'page-header-row' : ''} ${className}`.trim()}>
             <div className="min-w-0">
                 <h1 className="page-title">{title}</h1>
                 {subtitle && <p className="page-subtitle">{subtitle}</p>}

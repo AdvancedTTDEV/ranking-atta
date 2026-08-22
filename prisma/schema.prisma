@@ -132,6 +132,9 @@ model torneos {
   // INDIVIDUAL el frontend puede crear torneos abiertos manualmente; en
   // DOBLES/EQUIPOS se considera abierto por modalidad.
   abierto              Boolean                @default(false)
+  // Clase "Sub 21": los resultados del torneo NO afectan el ELO/ranking
+  // (no se invoca el SP procesar_partido ni su reverso).
+  sub21                Boolean                @default(false)
   historial_categorias historial_categorias[]
   jugadores            jugadores[]
   participaciones      participaciones[]
@@ -156,6 +159,7 @@ model torneo_grupos {
   participantes torneo_grupo_participantes[]
   partidos      torneo_partidos_programados[]
 
+  @@index([torneo_id, categoria_id])
   @@index([torneo_id])
   @@index([categoria_id])
 }
@@ -232,6 +236,10 @@ model torneo_partidos_programados {
   fase                      fase_partido_torneo @default(GRUPOS)
   ronda_eliminacion         String?             @db.VarChar(30)
   posicion_llave            Int?
+  // Solo ATTA_TEAMS: distingue las tres llaves paralelas que salen de
+  // cada grupo (1 = clasificados 1ros "Oro", 2 = 2dos "Plata", 3 = 3ros
+  // "Bronce"). En las demás modalidades queda NULL.
+  nivel_llave               Int?
   siguiente_partido_id      Int?
   siguiente_lado            lado_partido?
   ganador_participante_id   Int?
@@ -254,6 +262,7 @@ model torneo_partidos_programados {
   auditorias             torneo_partido_auditorias[]
 
   @@unique([grupo_id, orden])
+  @@index([torneo_id, categoria_id, fase])
   @@index([torneo_id])
   @@index([categoria_id])
   @@index([participante_local_id])
@@ -402,4 +411,24 @@ enum torneo_modalidad {
   INDIVIDUAL
   DOBLES
   EQUIPOS
+  ATTA_TEAMS
+}
+
+// Usuarios autorizados a entrar al dashboard. Mientras la tabla esté
+// vacía, el login con Google queda abierto (modo actual). En cuanto se
+// inserte el primer registro, SOLO los emails activos de esta tabla
+// podrán iniciar sesión.
+model usuarios_app {
+  id        Int                     @id @default(autoincrement())
+  email     String                  @unique(map: "email")
+  nombre    String?                 @db.VarChar(100)
+  rol       usuarios_app_rol        @default(ADMIN)
+  activo    Boolean                 @default(true)
+  creado_en DateTime                @default(now()) @db.DateTime(0)
+}
+
+enum usuarios_app_rol {
+  ADMIN
+  OPERADOR
+  LECTURA
 }

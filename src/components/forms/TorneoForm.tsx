@@ -25,6 +25,7 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [categorias, setCategorias] = useState<Categoria[]>([])
     const [abierto, setAbierto] = useState(false)
+    const [sub21, setSub21] = useState(false)
 
     useEffect(() => {
         const fetchCategorias = async () => {
@@ -75,6 +76,7 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
             modalidad,
             abierto,
             categorias: categoriasAEnviar,
+            sub21,
         }
         try {
             const response = await fetch('/api/torneos', {
@@ -116,6 +118,15 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
                     <option value="INDIVIDUAL">Individual</option>
                     <option value="DOBLES">Dobles</option>
                     <option value="EQUIPOS">Por equipos</option>
+                    <option value="ATTA_TEAMS">ATTA Teams</option>
+                </Select>
+                <Select
+                    label="Clase de torneo"
+                    value={sub21 ? 'SUB21' : 'REGULAR'}
+                    onChange={(e) => setSub21(e.target.value === 'SUB21')}
+                >
+                    <option value="REGULAR">Regular</option>
+                    <option value="SUB21">Sub 21 (no vale para ELO)</option>
                 </Select>
                 <Input
                     label="Fecha"
@@ -186,8 +197,19 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
                     )
                 ) : (
                     <div className="banner banner-info text-xs">
-                        Los torneos de {modalidad === 'DOBLES' ? 'dobles' : 'por equipos'} son
-                        abiertos a todas las categorías. Se asignarán automáticamente al crear el torneo.
+                        {modalidad === 'ATTA_TEAMS' ? (
+                            <>
+                                <b>ATTA Teams:</b> los equipos se arman con jugadores de todos los clubes
+                                (máx. 1 de primera y 1 de segunda, o sin primera y máx. 2 de segunda;
+                                el resto de tercera/cuarta). De cada grupo clasifican 3 equipos:
+                                el 1º a la llave de primera, el 2º a la de segunda y el 3º a la de tercera.
+                            </>
+                        ) : (
+                            <>
+                                Los torneos de {modalidad === 'DOBLES' ? 'dobles' : 'por equipos'} son
+                                abiertos a todas las categorías. Se asignarán automáticamente al crear el torneo.
+                            </>
+                        )}
                     </div>
                 )}
             </div>

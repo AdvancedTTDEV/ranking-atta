@@ -34,6 +34,11 @@ interface DetalleLite {
 interface PartidoLite {
     id: number
     orden: number
+    /** Participantes reales de ESTE partido. Pueden estar invertidos
+     *  respecto a `equipos` si el cruce se programó al revés; el guardado
+     *  los usa para colocar cada jugador en su lado correcto. */
+    participante_local_id?: number | null
+    participante_visitante_id?: number | null
     detalles: DetalleLite[]
 }
 
@@ -94,7 +99,10 @@ export default function EncuentroEquiposWizardModal({
     useEffect(() => {
         if (!isOpen) return
         setStep('seleccion-lado')
-        setLadoAbc('local')
+        // La elección ABC/XYZ es SIEMPRE explícita: el operador decide
+        // qué equipo lleva las letras A/B/C según las hojas de los
+        // capitanes. No pre-seleccionamos nada.
+        setLadoAbc(null)
 
         const idsRosterAbc = equipos.local.miembros.map(m => m.jugadores.id)
         const idsRosterXyz = equipos.visitante.miembros.map(m => m.jugadores.id)
@@ -106,6 +114,10 @@ export default function EncuentroEquiposWizardModal({
         const desdeBd = leerAsignacionDesdeBd(partidos)
         if (desdeBd) {
             setAsignacion(desdeBd)
+            // La alineación guardada fue leída asumiendo que el lado LOCAL
+            // lleva las letras ABC: en modo edición respetamos esa
+            // orientación para no invertir los lados al re-guardar.
+            setLadoAbc('local')
         } else {
             setAsignacion(baseDefecto)
         }
@@ -155,10 +167,36 @@ export default function EncuentroEquiposWizardModal({
         if (!ladoAbc || !asignacionCompleta) return
         const matchups = matchupsEstandar(modalidad)
 
+        const idLocalRef = equipos.local.id
+        const idVisitaRef = equipos.visitante.id
+        const abcTeamId = ladoAbc === 'local' ? idLocalRef : idVisitaRef
+
+        // Solo aplican los partidos que enfrentan exactamente al mismo par
+        // de equipos (en cualquier orden). En grupos de más de 2 equipos hay
+        // cruces de otras parejas: esos NO reciben esta alineación. Si el
+        // caller no mandó los IDs de participantes (wizard de un solo
+        // partido de llave), asumimos que el partido ES el cruce de
+        // referencia.
+        const aplicables = partidos.filter(p => {
+            const pl = p.participante_local_id ?? idLocalRef
+            const pv = p.participante_visitante_id ?? idVisitaRef
+            return (pl === idLocalRef && pv === idVisitaRef)
+                || (pl === idVisitaRef && pv === idLocalRef)
+        })
+        if (aplicables.length === 0) {
+            toast.error('No hay partidos entre estos dos equipos en el grupo')
+            return
+        }
+
         // Para CADA partido, calculamos los jugadores por detalle y mandamos
         // un PUT con todos los detalles del partido que tienen jugadores
         // asignados.
-        const requests = partidos.map(async partido => {
+        const requests = aplicables.map(async partido => {
+            // ¿El equipo ABC es el local en ESTE partido? Si el cruce quedó
+            // invertido respecto a la referencia, intercambiamos los lados
+            // del payload para que cada jugador caiga en su equipo real.
+            const abcEsLocal = (partido.participante_local_id ?? idLocalRef) === abcTeamId
+
             const detallesPayload: Array<{
                 detalle_id: number
                 jugadores_local_ids: Array<number | string>
@@ -178,8 +216,8 @@ export default function EncuentroEquiposWizardModal({
                         if (!resol) return
                         detallesPayload.push({
                             detalle_id: detalle.id,
-                            jugadores_local_ids: resol.local,
-                            jugadores_visitante_ids: resol.visitante,
+                            jugadores_local_ids: abcEsLocal ? resol.local : resol.visitante,
+                            jugadores_visitante_ids: abcEsLocal ? resol.visitante : resol.local,
                         })
                     })
             } else {
@@ -192,8 +230,8 @@ export default function EncuentroEquiposWizardModal({
                 if (!resol) return
                 detallesPayload.push({
                     detalle_id: detalle.id,
-                    jugadores_local_ids: resol.local,
-                    jugadores_visitante_ids: resol.visitante,
+                    jugadores_local_ids: abcEsLocal ? resol.local : resol.visitante,
+                    jugadores_visitante_ids: abcEsLocal ? resol.visitante : resol.local,
                 })
             }
 
@@ -215,13 +253,17 @@ export default function EncuentroEquiposWizardModal({
         setGuardando(true)
         try {
             await Promise.all(requests)
+            const omitidos = partidos.length - aplicables.length
             toast.success(
-                partidos.length === 1
+                aplicables.length === 1
                     ? 'Alineación guardada'
-                    : `Alineación guardada para ${partidos.length} partidos del grupo`,
+                    : `Alineación guardada para ${aplicables.length} partidos del grupo`
+                        + (omitidos > 0 ? ` (${omitidos} de otros cruces omitidos)` : ''),
             )
-            setStep('revisar-matchups')
+            // Cerramos el wizard al guardar: el feedback es el toast + la
+            // lista actualizada con los estados de alineación al día.
             onGuardado?.()
+            onClose()
         } catch (error) {
             toast.error(error instanceof Error ? error.message : 'Error al guardar')
         } finally {
@@ -295,7 +337,12 @@ export default function EncuentroEquiposWizardModal({
                         localNombre={nombreEquipo(equipos.local)}
                         visitanteNombre={nombreEquipo(equipos.visitante)}
                         ladoAbc={ladoAbc}
-                        onElegir={setLadoAbc}
+                        onElegir={(eq) => {
+                            // Elegir ABC avanza directo a asignar letras: el
+                            // otro equipo queda como XYZ automáticamente.
+                            setLadoAbc(eq)
+                            setStep('asignar-letras')
+                        }}
                     />
                 )}
                 {step === 'asignar-letras' && equipoAbc && equipoXyz && (
@@ -413,51 +460,45 @@ function PasoSeleccionLado({
     ladoAbc: 'local' | 'visitante' | null
     onElegir: (eq: 'local' | 'visitante') => void
 }) {
-    const clasesBoton = (eq: 'local' | 'visitante', textoSi: string) => {
-        const activo = ladoAbc === eq
-        const inactivo = ladoAbc !== null && !activo
-        return [
-            'card-flush p-5 text-center transition-all relative',
-            activo ? 'ring-2 ring-brand bg-brand-soft/30'
-            : inactivo ? 'opacity-50 hover:opacity-80'
-            : 'hover:bg-brand-soft/30',
-        ].join(' ')
-    }
     return (
         <div className="py-6 text-center">
             <p className="text-base text-fg">
-                ¿<b>Qué equipo</b> será <span className="font-mono">ABC</span> y cuál <span className="font-mono">XYZ</span>?
+                ¿<b>Quién será</b> <span className="font-mono">ABC</span>?
             </p>
             <p className="text-sm text-fg-muted mt-1">
-                Esto se elige según las hojas de alineación que te entregaron los capitanes.
+                Elige el equipo que lleva las letras A, B, C según las hojas de alineación de los capitanes.
+                El otro equipo será <span className="font-mono">XYZ</span> automáticamente.
             </p>
             <div className="mt-6 grid grid-cols-2 gap-4 max-w-2xl mx-auto">
-                <button
-                    type="button"
-                    onClick={() => onElegir('local')}
-                    aria-pressed={ladoAbc === 'local'}
-                    className={clasesBoton('local', 'ABC')}
-                >
-                    {ladoAbc === 'local' && (
-                        <CheckCircleIcon className="absolute top-3 right-3 h-6 w-6 text-brand" />
-                    )}
-                    <Badge variant="brand" className="mb-2">LOCAL</Badge>
-                    <div className="text-base font-semibold text-fg">{localNombre}</div>
-                    <div className="text-xs text-fg-muted mt-1">Será ABC</div>
-                </button>
-                <button
-                    type="button"
-                    onClick={() => onElegir('visitante')}
-                    aria-pressed={ladoAbc === 'visitante'}
-                    className={clasesBoton('visitante', 'ABC')}
-                >
-                    {ladoAbc === 'visitante' && (
-                        <CheckCircleIcon className="absolute top-3 right-3 h-6 w-6 text-brand" />
-                    )}
-                    <Badge variant="warning" className="mb-2">VISITANTE</Badge>
-                    <div className="text-base font-semibold text-fg">{visitanteNombre}</div>
-                    <div className="text-xs text-fg-muted mt-1">Será XYZ</div>
-                </button>
+                {(['local', 'visitante'] as const).map(eq => {
+                    const activo = ladoAbc === eq
+                    const nombre = eq === 'local' ? localNombre : visitanteNombre
+                    const badge = eq === 'local' ? 'LOCAL' : 'VISITANTE'
+                    const variante = eq === 'local' ? 'brand' as const : 'warning' as const
+                    return (
+                        <button
+                            key={eq}
+                            type="button"
+                            onClick={() => onElegir(eq)}
+                            aria-pressed={activo}
+                            className={[
+                                'card-flush p-5 text-center transition-all relative',
+                                activo ? 'ring-2 ring-brand bg-brand-soft/30'
+                                    : ladoAbc !== null ? 'opacity-50 hover:opacity-80'
+                                    : 'hover:bg-brand-soft/30',
+                            ].join(' ')}
+                        >
+                            {activo && (
+                                <CheckCircleIcon className="absolute top-3 right-3 h-6 w-6 text-brand" />
+                            )}
+                            <Badge variant={variante} className="mb-2">{badge}</Badge>
+                            <div className="text-base font-semibold text-fg">{nombre}</div>
+                            <div className={`text-xs mt-1 font-medium ${activo ? 'text-brand' : 'text-fg-muted'}`}>
+                                {activo ? 'Será ABC' : ladoAbc !== null ? 'Será XYZ' : 'Toca para elegir'}
+                            </div>
+                        </button>
+                    )
+                })}
             </div>
         </div>
     )
@@ -644,13 +685,14 @@ function PasoRevisarMatchups({
     return (
         <div className="py-4">
             <p className="text-sm text-fg-muted mb-3">
-                Estos son los cruces que se registrarán en cada partido. Confirma con
-                <b> Aceptar y guardar</b> para persistir la alineación.
+                Esta es la serie de cruces ({matchups.length} sub-partidos) que se registrará
+                <b> igual en los {partidos.length} partido{partidos.length === 1 ? '' : 's'} del grupo</b>.
+                Confirma con <b> Aceptar y guardar</b> para persistir la alineación.
             </p>
             <div className="card-flush overflow-hidden">
                 <div className="px-4 py-2 bg-subtle border-b border-line text-xs font-bold text-fg-muted uppercase tracking-wider flex items-center gap-2">
                     <UsersIcon className="h-3.5 w-3.5" />
-                    Resumen de {partidos.length} partido{partidos.length === 1 ? '' : 's'}
+                    Serie estándar · 1 dobles + {matchups.length - 1} individuales
                 </div>
                 <div className="overflow-x-auto">
                     <table className="table-compact">
@@ -663,66 +705,21 @@ function PasoRevisarMatchups({
                             </tr>
                         </thead>
                         <tbody>
-                            {partidos.map((partido, idxPartido) => {
-                                // Para cada partido del grupo, renderizamos los
-                                // matchups que aplican (1 para DOBLES, hasta 5
-                                // para EQUIPOS). Como todos los partidos del
-                                // grupo usan los MISMOS matchups, podemos
-                                // repetirlos o limitarnos a idxPartido === 0.
-                                // Si solo hay 1 partido: mostramos los N
-                                // matchups como filas. Si hay varios:
-                                // mostramos 1 fila por partido, cada fila con
-                                // el primer matchup (DOBLES) si la modalidad
-                                // es DOBLES, o la lista completa si es
-                                // EQUIPOS.
-                                if (modalidad === 'EQUIPOS') {
-                                    return matchups.map((m, idxM) => {
-                                        const letrasLoc = Array.isArray(m.cruces.local) ? m.cruces.local : [m.cruces.local]
-                                        const letrasVis = Array.isArray(m.cruces.visitante) ? m.cruces.visitante : [m.cruces.visitante]
-                                        const tag = m.tipo === 'DOBLES' ? 'DOB' : `IND ${idxM}`
-                                        return (
-                                            <tr key={`${partido.id}-${idxM}`}>
-                                                <td className="text-center text-xs text-fg-muted font-mono">
-                                                    {partidos.length > 1 ? `${partido.orden}.` : ''}
-                                                </td>
-                                                <td>
-                                                    <div className="flex items-start gap-1">
-                                                        <Badge variant={m.tipo === 'DOBLES' ? 'warning' : 'brand'}>{tag}</Badge>
-                                                        <div className="text-sm">
-                                                            <div className="text-xs text-fg-muted font-mono">{letrasLoc.join('+')}</div>
-                                                            {letrasLoc.map((l, i) => (
-                                                                <div key={i}>{jugadorPor(poolAbc, asignacion.abc[l])}</div>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                                <td className="text-fg-muted text-center">vs</td>
-                                                <td>
-                                                    <div className="flex items-start gap-1">
-                                                        <div className="text-sm">
-                                                            <div className="text-xs text-fg-muted font-mono">{letrasVis.join('+')}</div>
-                                                            {letrasVis.map((l, i) => (
-                                                                <div key={i}>{jugadorPor(poolXyz, asignacion.xyz[l])}</div>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        )
-                                    })
-                                }
-                                // DOBLES: 1 solo matchup
-                                const m = matchups[0]
+                            {/* La alineación ABC/XYZ es UNA para todo el grupo:
+                                se muestra la lista de matchups UNA sola vez y al
+                                guardar se aplica idéntica a cada partido. */}
+                            {matchups.map((m, idxM) => {
                                 const letrasLoc = Array.isArray(m.cruces.local) ? m.cruces.local : [m.cruces.local]
                                 const letrasVis = Array.isArray(m.cruces.visitante) ? m.cruces.visitante : [m.cruces.visitante]
+                                const tag = m.tipo === 'DOBLES' ? 'DOB' : `IND ${idxM}`
                                 return (
-                                    <tr key={partido.id}>
+                                    <tr key={idxM}>
                                         <td className="text-center text-xs text-fg-muted font-mono">
-                                            {partidos.length > 1 ? `${partido.orden}.` : ''}
+                                            {idxM + 1}
                                         </td>
                                         <td>
                                             <div className="flex items-start gap-1">
-                                                <Badge variant="warning">DOB</Badge>
+                                                <Badge variant={m.tipo === 'DOBLES' ? 'warning' : 'brand'}>{tag}</Badge>
                                                 <div className="text-sm">
                                                     <div className="text-xs text-fg-muted font-mono">{letrasLoc.join('+')}</div>
                                                     {letrasLoc.map((l, i) => (
@@ -733,11 +730,13 @@ function PasoRevisarMatchups({
                                         </td>
                                         <td className="text-fg-muted text-center">vs</td>
                                         <td>
-                                            <div className="text-sm">
-                                                <div className="text-xs text-fg-muted font-mono">{letrasVis.join('+')}</div>
-                                                {letrasVis.map((l, i) => (
-                                                    <div key={i}>{jugadorPor(poolXyz, asignacion.xyz[l])}</div>
-                                                ))}
+                                            <div className="flex items-start gap-1">
+                                                <div className="text-sm">
+                                                    <div className="text-xs text-fg-muted font-mono">{letrasVis.join('+')}</div>
+                                                    {letrasVis.map((l, i) => (
+                                                        <div key={i}>{jugadorPor(poolXyz, asignacion.xyz[l])}</div>
+                                                    ))}
+                                                </div>
                                             </div>
                                         </td>
                                     </tr>

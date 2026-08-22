@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import TorneoForm from '@/components/forms/TorneoForm'
 import DataTable from '@/components/ui/DataTable'
 import { PlusIcon } from '@heroicons/react/24/outline'
@@ -7,16 +7,20 @@ import InscripcionTorneoModal from '@/components/ui/InscripcionTorneoModal'
 import GruposTorneoModal from '@/components/ui/GruposTorneoModal'
 import PartidosTorneoModal from '@/components/ui/PartidosTorneoModal'
 import LlavesTorneoModal from '@/components/ui/LlavesTorneoModal'
+import { DestinoModal } from '@/components/ui/NavegacionModales'
 import { Section } from '@/components/ui/Section'
+import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { useRecurso } from '@/app/hooks/useRecurso'
+import Buscador, { useDebounce } from '@/components/ui/Buscador'
 
 type Torneo = {
     id: number
     nombre: string
     fecha: string
     ubicacion: string
-    modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS'
+    modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS' | 'ATTA_TEAMS'
     torneo_categorias: { categorias: { id: number; nombre: string } }[]
 }
 
@@ -29,22 +33,23 @@ const modalidadLabel: Record<Torneo['modalidad'], string> = {
     INDIVIDUAL: 'Individual',
     DOBLES: 'Dobles',
     EQUIPOS: 'Equipos',
+    ATTA_TEAMS: 'ATTA Teams',
 }
 
 const modalidadVariant: Record<Torneo['modalidad'], 'info' | 'brand' | 'warning'> = {
     INDIVIDUAL: 'info',
     DOBLES: 'brand',
     EQUIPOS: 'warning',
+    ATTA_TEAMS: 'brand',
 }
 
 export default function TorneosSection({ className = '' }) {
     const [showForm, setShowForm] = useState(false)
-    const [torneos, setTorneos] = useState<Torneo[]>([])
+    const [busqueda, setBusqueda] = useState('')
+    const busquedaDebounce = useDebounce(busqueda)
+    const [modalidadFiltro, setModalidadFiltro] = useState('')
     const [currentPage, setCurrentPage] = useState(1)
     const [itemsPerPage, setItemsPerPage] = useState(10)
-    const [totalItems, setTotalItems] = useState(0)
-    const [isLoading, setIsLoading] = useState(false)
-    const [error, setError] = useState<string | null>(null)
 
     const [selectedTorneo, setSelectedTorneo] = useState<Torneo | null>(null)
     const [showInscripcionModal, setShowInscripcionModal] = useState(false)
@@ -52,33 +57,30 @@ export default function TorneosSection({ className = '' }) {
     const [showPartidosModal, setShowPartidosModal] = useState(false)
     const [showLlavesModal, setShowLlavesModal] = useState(false)
 
-    const fetchTorneos = async (page: number, limit: number) => {
-        setIsLoading(true)
-        setError(null)
-        try {
-            const response = await fetch(`/api/torneos?page=${page}&limit=${limit}`)
-            const data: PaginatedResponse = await response.json()
-            if (!response.ok) {
-                throw new Error((data as PaginatedResponse & { message?: string }).message || 'No se pudieron cargar los torneos')
-            }
-            setTorneos(Array.isArray(data.torneos) ? data.torneos : [])
-            setTotalItems(typeof data.total === 'number' ? data.total : 0)
-        } catch (error) {
-            console.error('Error fetching tournaments:', error)
-            setTorneos([])
-            setTotalItems(0)
-            setError(error instanceof Error ? error.message : 'No se pudieron cargar los torneos')
-        } finally {
-            setIsLoading(false)
-        }
+    /** Salto directo entre los modales del torneo conservando el torneo
+     *  seleccionado (la barra inferior de cada modal la invoca). */
+    const navegarA = (destino: DestinoModal) => {
+        setShowInscripcionModal(destino === 'inscripcion')
+        setShowGruposModal(destino === 'grupos')
+        setShowPartidosModal(destino === 'partidos')
+        setShowLlavesModal(destino === 'llaves')
     }
 
+    // Al escribir en el buscador o cambiar filtro, volver a la primera página.
     useEffect(() => {
-        fetchTorneos(currentPage, itemsPerPage)
-    }, [currentPage, itemsPerPage])
+        setCurrentPage(1)
+    }, [busquedaDebounce, modalidadFiltro])
+
+    const { datos, isLoading, error, refresh } = useRecurso<PaginatedResponse>(
+        `/api/torneos?page=${currentPage}&limit=${itemsPerPage}${
+            busquedaDebounce ? `&nombre=${encodeURIComponent(busquedaDebounce)}` : ''
+        }${modalidadFiltro ? `&modalidad=${modalidadFiltro}` : ''}`
+    )
+    const torneos = datos?.torneos ?? []
+    const totalItems = datos?.total ?? 0
 
     const columns = [
-        { header: 'ID', accessor: 'id', key: 'id', className: 'w-16 text-fg-muted' },
+        { header: 'ID', accessor: 'id', key: 'id', className: 'w-16 text-fg-muted', ocultarEnMovil: true },
         {
             header: 'Nombre',
             accessor: 'nombre',
@@ -92,6 +94,7 @@ export default function TorneosSection({ className = '' }) {
         },
         {
             header: 'Ubicación',
+            ocultarEnMovil: true,
             accessor: 'ubicacion',
             className: 'hidden md:table-cell text-fg-muted',
         },
@@ -104,6 +107,7 @@ export default function TorneosSection({ className = '' }) {
         },
         {
             header: 'Categorías',
+            ocultarEnMovil: true,
             accessor: 'torneo_categorias',
             render: (tc: { categorias?: { nombre?: string } }[]) => (
                 <div className="flex flex-wrap gap-1">
@@ -193,7 +197,7 @@ export default function TorneosSection({ className = '' }) {
                 <TorneoForm
                     onSuccessAction={() => {
                         setShowForm(false)
-                        fetchTorneos(currentPage, itemsPerPage)
+                        refresh()
                     }}
                     onCancelAction={() => setShowForm(false)}
                 />
@@ -205,6 +209,28 @@ export default function TorneosSection({ className = '' }) {
                         </div>
                     )}
                     <DataTable
+                        toolbar={
+                            <div className="flex flex-col sm:flex-row gap-2">
+                                <Buscador
+                                    valor={busqueda}
+                                    onCambiar={setBusqueda}
+                                    placeholder="Buscar torneo…"
+                                    className="sm:w-56"
+                                />
+                                <Select
+                                    value={modalidadFiltro}
+                                    onChange={(e) => setModalidadFiltro(e.target.value)}
+                                    className="sm:w-44"
+                                    aria-label="Filtrar por modalidad"
+                                >
+                                    <option value="">Todas las modalidades</option>
+                                    <option value="INDIVIDUAL">Individual</option>
+                                    <option value="DOBLES">Dobles</option>
+                                    <option value="EQUIPOS">Equipos</option>
+                                    <option value="ATTA_TEAMS">ATTA Teams</option>
+                                </Select>
+                            </div>
+                        }
                         columns={columns}
                         data={torneos}
                         currentPage={currentPage}
@@ -225,6 +251,7 @@ export default function TorneosSection({ className = '' }) {
                     setSelectedTorneo(null)
                 }}
                 torneo={selectedTorneo}
+                onNavegar={navegarA}
             />
 
             <GruposTorneoModal
@@ -238,6 +265,7 @@ export default function TorneosSection({ className = '' }) {
                     setShowGruposModal(false)
                     setShowPartidosModal(true)
                 }}
+                onNavegar={navegarA}
             />
 
             <PartidosTorneoModal
@@ -251,6 +279,7 @@ export default function TorneosSection({ className = '' }) {
                     setShowPartidosModal(false)
                     setShowLlavesModal(true)
                 }}
+                onNavegar={navegarA}
             />
             <LlavesTorneoModal
                 isOpen={showLlavesModal}
@@ -259,6 +288,7 @@ export default function TorneosSection({ className = '' }) {
                     setSelectedTorneo(null)
                 }}
                 torneo={selectedTorneo}
+                onNavegar={navegarA}
             />
         </Section>
     )

@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma'
 import { guardarJugadoresDetalle } from '@/lib/torneo/partidos'
 import { NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/auth'
 
 interface RouteParams { params: Promise<{ id: string; partidoId: string; detalleId: string }> }
 type SetResultado = { local: number; visitante: number }
@@ -10,6 +11,9 @@ const esSetValido = ({ local, visitante }: SetResultado) =>
     && Math.max(local, visitante) >= 11 && Math.abs(local - visitante) >= 2
 
 export async function PUT(request: Request, { params }: RouteParams) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const { id, partidoId, detalleId } = await params
         const torneoId = Number(id)
@@ -27,7 +31,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
             include: {
                 partido_programado: {
                     include: {
-                        torneos: { select: { modalidad: true } },
+                        torneos: { select: { modalidad: true, sub21: true } },
                         participante_local: { include: { miembros: true } },
                         participante_visitante: { include: { miembros: true } }
                     }
@@ -36,7 +40,9 @@ export async function PUT(request: Request, { params }: RouteParams) {
         })
         if (!detalle) return NextResponse.json({ error: 'Partido de equipo no encontrado' }, { status: 404 })
         if (!detalle.partido_programado.participante_local || !detalle.partido_programado.participante_visitante) return NextResponse.json({ error: 'La llave aún no tiene ambos equipos' }, { status: 400 })
-        if (detalle.partido_programado.torneos.modalidad !== 'EQUIPOS') return NextResponse.json({ error: 'Este detalle solo existe para equipos' }, { status: 400 })
+        if (detalle.partido_programado.torneos.modalidad !== 'EQUIPOS' && detalle.partido_programado.torneos.modalidad !== 'ATTA_TEAMS') {
+            return NextResponse.json({ error: 'Este detalle solo existe para torneos por equipos' }, { status: 400 })
+        }
         if (detalle.estado === 'FINALIZADO') return NextResponse.json({ error: 'Este partido ya fue guardado' }, { status: 409 })
 
         const cantidadEsperada = detalle.tipo === 'DOBLES' ? 2 : 1
@@ -67,12 +73,17 @@ export async function PUT(request: Request, { params }: RouteParams) {
         })
 
         // El dobles cuenta en la serie, pero no afecta el ranking. Cada
-        // individual sí conserva el SP existente de puntos/ELO.
-        if (detalle.tipo === 'INDIVIDUAL') {
+        // individual sí conserva el SP existente de puntos/ELO (salvo
+        // torneos Sub 21, que no valen para ELO).
+        const esSub21 = detalle.partido_programado.torneos.sub21
+        if (detalle.tipo === 'INDIVIDUAL' && !esSub21) {
             const local = Number(jugadoresLocalIds[0])
             const visitante = Number(jugadoresVisitanteIds[0])
             const ganador = ganadorLado === 'LOCAL' ? local : visitante
-            await prisma.$executeRawUnsafe(`CALL procesar_partido(${local}, ${visitante}, ${ganador}, ${torneoId}, 'Grupos', NULL)`)
+// Forzamos la collation de la sesión a la del ENUM de la tabla
+            // para que las comparaciones internas del SP no mezclen colaciones.
+            await prisma.$executeRawUnsafe(`SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;`)
+            await prisma.$executeRaw`CALL procesar_partido(${local}, ${visitante}, ${ganador}, ${torneoId}, 'Grupos', NULL)`
         }
 
         const detallesFinalizados = await prisma.torneo_partido_detalles.findMany({

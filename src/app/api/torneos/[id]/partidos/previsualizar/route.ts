@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma'
 import { NextResponse } from 'next/server'
 import { crucesRoundRobin } from '@/lib/seed'
+import { requireAuth } from '@/lib/auth'
 
 interface RouteParams { params: Promise<{ id: string }> }
 
@@ -20,6 +21,9 @@ const nombreParticipante = (participante: {
     || 'Participante'
 
 export async function GET(request: Request, { params }: RouteParams) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const { id } = await params
         const torneoId = Number(id)

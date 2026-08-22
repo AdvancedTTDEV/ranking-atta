@@ -3,6 +3,7 @@
 import { ReactNode } from 'react'
 import useAuthAndDb from '@/app/hooks/useAuthAndDb'
 import Modal from '@/components/ui/Modal'
+import CargandoPantalla from '@/components/ui/CargandoPantalla'
 
 interface DashboardGateProps {
     children: ReactNode
@@ -14,7 +15,7 @@ interface DashboardGateProps {
  * the user is signed in and the database is reachable.
  */
 export function DashboardGate({ children }: DashboardGateProps) {
-    const { session, modalOpen, handleLogin, dbReady, loading } = useAuthAndDb()
+    const { session, modalOpen, handleLogin, dbReady, loading, intento } = useAuthAndDb()
 
     return (
         <>
@@ -31,13 +32,11 @@ export function DashboardGate({ children }: DashboardGateProps) {
             </Modal>
 
             {loading && (
-                <div className="flex items-center gap-3 text-fg-muted">
-                    <span
-                        className="inline-block h-3.5 w-3.5 rounded-full border-2 border-current border-t-transparent animate-spin"
-                        aria-hidden="true"
-                    />
-                    <span>Conectando con la base de datos…</span>
-                </div>
+                <CargandoPantalla
+                    titulo="Conectando con la base de datos"
+                    intento={intento}
+                    totalIntentos={5}
+                />
             )}
 
             {session && dbReady && children}

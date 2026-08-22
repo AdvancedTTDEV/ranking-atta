@@ -1,6 +1,7 @@
 'use client'
 
 import { SessionProvider } from 'next-auth/react'
+import { instalarInterceptadorFetch } from '@/lib/fetchCache'
 import {
     ReactNode,
     createContext,
@@ -56,6 +57,9 @@ type ProvidersProps = {
 export default function Providers({ children }: ProvidersProps) {
     const [theme, setThemeState] = useState<Theme>(DEFAULT_THEME)
     const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('dark')
+
+    // Interceptador de mutaciones para la caché SWR (idempotente).
+    useEffect(() => { instalarInterceptadorFetch() }, [])
 
     useEffect(() => {
         const stored = (typeof window !== 'undefined'

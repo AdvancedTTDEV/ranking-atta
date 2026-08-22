@@ -12,11 +12,13 @@ import {
     UsersIcon,
 } from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
+import NavegacionModales, { DestinoModal } from '@/components/ui/NavegacionModales'
+import CargandoPantalla from '@/components/ui/CargandoPantalla'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
-import EncuentroEquiposWizardModal from '@/components/ui/EncuentroEquiposWizardModal'
-
+import { matchupsEstandar } from '@/lib/torneo/matchups'
+import { abrirImpresion, construirDocLlaves, descargarPngDeDoc, prefiereModoOscuro, type RondaLlaveDoc } from '@/lib/documentos-torneo'
 type Club = { id: number; nombre: string }
 type Jugador = { nombre: string; clubes?: Club | null }
 type Participante = {
@@ -35,6 +37,9 @@ type Partido = {
     sets_local: number
     sets_visitante: number
     estado: string
+    /** Avance hacia la siguiente ronda (para detectar huecos que esperan rival). */
+    siguiente_partido_id?: number | null
+    siguiente_lado?: 'LOCAL' | 'VISITANTE' | null
     participante_local: Participante | null
     participante_visitante: Participante | null
     /** Detalles de sub-partidos (DOBLES/EQUIPOS). Solo presente cuando
@@ -64,6 +69,18 @@ type PoolItem = {
 
 /** Slot en la siembra manual de R1. */
 type SiembraSlot = { local: number | null; visitante: number | null }
+
+/**
+ * true = el cupo vacío del lado espera al ganador de un partido aún no
+ * jugado (NO es pase directo). Solo es bye "real" cuando la fuente del
+ * hueco no existe (R1) o ya cerró sin ganador.
+ */
+const esperaRivalEn = (todos: Partido[], p: Partido, lado: 'LOCAL' | 'VISITANTE') => {
+    const pid = lado === 'LOCAL' ? p.participante_local_id : p.participante_visitante_id
+    if (pid != null || p.estado === 'FINALIZADO') return false
+    const fuente = todos.find(x => x.siguiente_partido_id === p.id && x.siguiente_lado === lado)
+    return !!fuente && fuente.estado !== 'FINALIZADO'
+}
 
 /** Identifica un slot concreto de un partido de R1. */
 type SlotRef = { partidoId: number; lado: 'local' | 'visitante' }
@@ -123,6 +140,28 @@ const nombre = (p: Participante | null) =>
     || p?.jugadores?.nombre
     || 'BYE'
 
+/**
+ * Todas las rondas del bracket ordenadas de la primera a la final. El
+ * orden se deduce del tamaño (la primera ronda es la que MÁS partidos
+ * tiene), igual que `obtenerPrimeraRonda`. Las rondas futuras vienen con
+ * participantes null y se muestran como "Por definir" hasta que la ronda
+ * anterior finalice y el ganador avance.
+ */
+const obtenerRondasOrdenadas = (lista: Partido[]): [string, Partido[]][] => {
+    const map = new Map<string, Partido[]>()
+    for (const p of lista) {
+        const k = p.ronda_eliminacion || 'Ronda'
+        if (!map.has(k)) map.set(k, [])
+        map.get(k)!.push(p)
+    }
+    return [...map.entries()]
+        .sort((a, b) => b[1].length - a[1].length)
+        .map(([nombreRonda, juegos]) => [
+            nombreRonda,
+            juegos.slice().sort((a, b) => (a.posicion_llave ?? 0) - (b.posicion_llave ?? 0)),
+        ])
+}
+
 // Mapa de rondas con su profundidad visual (mayor = ronda más avanzada).
 // Se usa para ordenar columnas y para nombrar cuando hay un único partido
 // en la última ronda (Final).
@@ -141,10 +180,13 @@ export default function LlavesTorneoModal({
     isOpen,
     onClose,
     torneo,
+    onNavegar,
 }: {
     isOpen: boolean
     onClose: () => void
     torneo: Torneo | null
+    /** Barra inferior para saltar entre modales del torneo. */
+    onNavegar?: (destino: DestinoModal) => void
 }) {
     const [categoriaId, setCategoriaId] = useState('')
     const [partidos, setPartidos] = useState<Partido[]>([])
@@ -155,7 +197,6 @@ export default function LlavesTorneoModal({
     const [ganadoresBorrador, setGanadoresBorrador] = useState<Record<number, number>>({})
     const [todasCategorias, setTodasCategorias] = useState<{ id: number; nombre: string }[]>([])
     const [descargando, setDescargando] = useState(false)
-    const llavesRef = useRef<HTMLDivElement | null>(null)
 
     // ── Siembra manual (modo único) ───────────────────────────────────────
     /**
@@ -165,6 +206,12 @@ export default function LlavesTorneoModal({
      * tenga que arrastrar los clasificados a las posiciones del bracket.
      */
     const [pool, setPool] = useState<PoolItem[]>([])
+    // Caché de datos por "categoría-nivel" (ATTA Teams): al abrir el modal
+    // se precargan las tres llaves en paralelo y el cambio de pestaña pinta
+    // al instante desde esta caché sin volver a golpear la BD. Va en un ref
+    // (no estado) para que invalidar + recargar sea síncrono: con useState,
+    // cargar() veía la entrada aún viva y pintaba datos rancios.
+    const cacheNiveles = useRef<Record<string, { partidos: Partido[]; pool: PoolItem[] }>>({})
     /** Siembra de R1: idPartido → { local, visitante }. Solo se mantiene para partidos de R1. */
     const [siembra, setSiembra] = useState<Record<number, SiembraSlot>>({})
     /** Si el usuario movió algo desde la siembra inicial. */
@@ -180,8 +227,6 @@ export default function LlavesTorneoModal({
     const [dragOverPool, setDragOverPool] = useState(false)
     /** Menú contextual por clic (alternativa accesible al drag). */
     const [menuSiembra, setMenuSiembra] = useState<{ slot: SlotRef; participanteId: number } | null>(null)
-    /** Wizard de alineación abierto para un partido de llave (DOBLES/EQUIPOS). */
-    const [wizardPartidoId, setWizardPartidoId] = useState<number | null>(null)
 
     useEffect(() => {
         let cancelado = false
@@ -202,6 +247,81 @@ export default function LlavesTorneoModal({
     // o si el usuario lo marcó como abierto al crearlo (columna `abierto`).
     // En INDIVIDUAL sin marca `abierto`, el selector se mantiene.
     const esAbierto = esTorneoAbiertoTotal(torneo?.modalidad, torneo?.abierto)
+    // ATTA Teams: tres llaves paralelas salen de cada grupo. El usuario
+    // alterna entre ellas con estas pestañas; cada una se carga, siembra
+    // y confirma por separado.
+    const esAttaTeams = torneo?.modalidad === 'ATTA_TEAMS'
+    const [nivel, setNivel] = useState<1 | 2 | 3>(1)
+    const nivelRef = useRef<1 | 2 | 3>(1)
+    useEffect(() => { nivelRef.current = nivel }, [nivel])
+
+    /** Clave de caché: los datos son por categoría Y por nivel de llave. */
+    const claveCache = (n: number) => `${categoriaId}:${n}`
+
+    /** Descarta la copia cacheada de un nivel (tras una mutación local). */
+    const invalidarCache = (n: number) => {
+        delete cacheNiveles.current[claveCache(n)]
+    }
+
+    /** Busca los datos completos de un participante en lo ya cargado. */
+    const resolverParticipante = (id: number | null | undefined): Participante | null => {
+        if (!id) return null
+        for (const p of partidos) {
+            if (p.participante_local?.id === id) return p.participante_local
+            if (p.participante_visitante?.id === id) return p.participante_visitante
+        }
+        return pool.find(i => i.participante.id === id)?.participante ?? null
+    }
+
+    /** Espeja la lista de partidos dentro de la caché del nivel activo. */
+    const espejarCachePartidos = (lista: Partido[]) => {
+        const clave = claveCache(nivelRef.current)
+        const c = cacheNiveles.current[clave]
+        if (c) cacheNiveles.current[clave] = { ...c, partidos: lista }
+    }
+
+    /** Optimista: refleja asignaciones de R1 en estado y caché al instante. */
+    const aplicarSiembraLocal = (asignaciones: { id: number; localId: number | null; visitanteId: number | null }[]) => {
+        setPartidos(prev => {
+            const nuevos = prev.map(p => {
+                const a = asignaciones.find(x => x.id === p.id)
+                if (!a) return p
+                return {
+                    ...p,
+                    participante_local_id: a.localId,
+                    participante_visitante_id: a.visitanteId,
+                    participante_local: resolverParticipante(a.localId),
+                    participante_visitante: resolverParticipante(a.visitanteId),
+                }
+            })
+            espejarCachePartidos(nuevos)
+            return nuevos
+        })
+    }
+
+    /** Optimista: marca el ganador confirmado y lo avanza al cruce siguiente. */
+    const aplicarGanadorLocal = (partidoId: number, ganadorId: number) => {
+        setPartidos(prev => {
+            const avances: { id: number; lado: 'LOCAL' | 'VISITANTE' }[] = []
+            const nuevos = prev.map(p => {
+                if (p.id === partidoId) {
+                    if (p.siguiente_partido_id && p.siguiente_lado) avances.push({ id: p.siguiente_partido_id, lado: p.siguiente_lado })
+                    return { ...p, ganador_participante_id: ganadorId, estado: 'FINALIZADO' as const }
+                }
+                return p
+            })
+            const conAvance = avances.length > 0 ? nuevos.map(p => {
+                const av = avances.find(a => a.id === p.id)
+                if (!av) return p
+                const part = resolverParticipante(ganadorId)
+                return av.lado === 'LOCAL'
+                    ? { ...p, participante_local_id: ganadorId, participante_local: part }
+                    : { ...p, participante_visitante_id: ganadorId, participante_visitante: part }
+            }) : nuevos
+            espejarCachePartidos(conAvance)
+            return conAvance
+        })
+    }
 
     useEffect(() => {
         if (!torneo) {
@@ -235,65 +355,100 @@ export default function LlavesTorneoModal({
         return mejor ? lista.filter(p => (p.ronda_eliminacion || 'Ronda') === mejor) : []
     }
 
-    const generarLlavesVacias = async (): Promise<boolean> => {
+    const generarLlavesVacias = async (nivelObjetivo: 1 | 2 | 3, silencioso = false): Promise<boolean> => {
         if (!torneo || !categoriaId) return false
-        setGenerando(true)
+        if (!silencioso) setGenerando(true)
         try {
             const r = await fetch(`/api/torneos/${torneo.id}/llaves`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ categoriaId: Number(categoriaId), clasificanPorGrupo: 2, vacio: true }),
+                body: JSON.stringify({
+                    categoriaId: Number(categoriaId),
+                    clasificanPorGrupo: esAttaTeams ? 3 : 2,
+                    vacio: true,
+                    ...(esAttaTeams ? { nivel: nivelObjetivo } : {})
+                }),
             })
             const d = await r.json()
             if (!r.ok) throw new Error(d.error)
             return true
         } catch (e) {
-            toast.error(e instanceof Error ? e.message : 'Error al crear el bracket')
+            if (!silencioso) toast.error(e instanceof Error ? e.message : 'Error al crear el bracket')
             return false
         } finally {
-            setGenerando(false)
+            if (!silencioso) setGenerando(false)
         }
     }
 
-    const cargar = async () => {
-        if (!torneo || !categoriaId) return
-        setLoading(true)
-        try {
-            // Pedimos también `detalles` para poder mostrar el botón
-            // "ABC/XYZ" en partidos de llave DOBLES/EQUIPOS.
-            let r = await fetch(`/api/torneos/${torneo.id}/llaves?categoriaId=${categoriaId}&withPool=true&withDetalles=true`)
-            let d = await r.json()
+    /** Pinta los datos recibidos y deriva la siembra de la primera ronda. */
+    const aplicarDatos = (datos: { partidos: Partido[]; pool: PoolItem[] }) => {
+        setPartidos(datos.partidos)
+        setPool(datos.pool)
+        // Sembrar el state desde BD: solo los partidos de R1.
+        const primeraRonda = obtenerPrimeraRonda(datos.partidos)
+        const nuevaSiembra: Record<number, SiembraSlot> = {}
+        for (const p of primeraRonda) {
+            nuevaSiembra[p.id] = {
+                local: p.participante_local_id,
+                visitante: p.participante_visitante_id
+            }
+        }
+        setSiembra(nuevaSiembra)
+        setHasChangesSiembra(false)
+    }
+
+    /** GET de llaves (crea el bracket vacío si aún no existe). */
+    const pedirDatos = async (n: 1 | 2 | 3, silencioso: boolean): Promise<{ partidos: Partido[]; pool: PoolItem[] } | null> => {
+        // Pedimos también `detalles` para poder mostrar el botón
+        // "ABC/XYZ" en partidos de llave DOBLES/EQUIPOS.
+        const sufijoNivel = esAttaTeams ? `&nivel=${n}` : ''
+        let r = await fetch(`/api/torneos/${torneo!.id}/llaves?categoriaId=${categoriaId}&withPool=true&withDetalles=true${sufijoNivel}`)
+        let d = await r.json()
+        if (!r.ok) throw new Error(d.error)
+        // Si todavía no hay bracket para esta categoría, lo creamos
+        // vacío de forma transparente. Así el usuario abre el modal y
+        // ya ve el bracket listo para sembrar, sin un paso previo
+        // de "Generar llaves".
+        if ((d.partidos || []).length === 0) {
+            const ok = await generarLlavesVacias(n, silencioso)
+            if (!ok) return null
+            r = await fetch(`/api/torneos/${torneo!.id}/llaves?categoriaId=${categoriaId}&withPool=true&withDetalles=true${sufijoNivel}`)
+            d = await r.json()
             if (!r.ok) throw new Error(d.error)
-            // Si todavía no hay bracket para esta categoría, lo creamos
-            // vacío de forma transparente. Así el usuario abre el modal y
-            // ya ve el bracket listo para sembrar, sin un paso previo
-            // de "Generar llaves".
-            if ((d.partidos || []).length === 0) {
-                const ok = await generarLlavesVacias()
-                if (!ok) {
-                    setPartidos([]); setPool([]); setSiembra({}); return
-                }
-                r = await fetch(`/api/torneos/${torneo.id}/llaves?categoriaId=${categoriaId}&withPool=true&withDetalles=true`)
-                d = await r.json()
-                if (!r.ok) throw new Error(d.error)
+        }
+        return { partidos: d.partidos || [], pool: d.pool || [] }
+    }
+
+    const cargar = async (destino?: 1 | 2 | 3, fondo = false) => {
+        if (!torneo || !categoriaId) return
+        const n = destino ?? nivel
+        // Modo silencioso: precarga de niveles distintos al activo; no toca
+        // spinners ni estado visible, solo llena la caché.
+        const silencioso = (destino !== undefined && n !== nivelRef.current) || fondo
+
+        // Caché lista: cambio de pestaña instantáneo, sin red. En modo fondo
+        // SIEMPRE vamos a la BD (reconciliación post-guardado).
+        const cacheado = !fondo && esAttaTeams ? cacheNiveles.current[claveCache(n)] : undefined
+        if (cacheado) {
+            if (!silencioso) aplicarDatos(cacheado)
+            return
+        }
+
+        if (!silencioso) setLoading(true)
+        try {
+            const datos = await pedirDatos(n, silencioso)
+            if (datos) {
+                cacheNiveles.current[claveCache(n)] = datos
+                // Si el usuario cambió de pestaña mientras volaban los
+                // requests, no pintemos datos de otra llave.
+                if (!silencioso || n === nivelRef.current) aplicarDatos(datos)
+            } else if (!silencioso) {
+                setPartidos([]); setPool([]); setSiembra({})
             }
-            setPartidos(d.partidos || [])
-            setPool(d.pool || [])
-            // Sembrar el state desde BD: solo los partidos de R1.
-            const primeraRonda = obtenerPrimeraRonda(d.partidos || [])
-            const nuevaSiembra: Record<number, SiembraSlot> = {}
-            for (const p of primeraRonda) {
-                nuevaSiembra[p.id] = {
-                    local: p.participante_local_id,
-                    visitante: p.participante_visitante_id
-                }
-            }
-            setSiembra(nuevaSiembra)
-            setHasChangesSiembra(false)
         } catch (e) {
-            toast.error(e instanceof Error ? e.message : 'No se pudieron cargar las llaves')
+            if (!silencioso) toast.error(e instanceof Error ? e.message : 'No se pudieron cargar las llaves')
         } finally {
-            setLoading(false)
+            if (!silencioso) setLoading(false)
         }
     }
 
@@ -303,11 +458,22 @@ export default function LlavesTorneoModal({
     // para sembrar, sin necesidad de un paso "Generar" previo.
     useEffect(() => {
         if (isOpen && categoriaId) cargar()
-        // cargar es estable por convención; las dependencias son isOpen y
-        // categoriaId. Recargar en cada cambio de categoría es la forma
-        // más simple de mantener pool + siembra sincronizados.
+        // cargar es estable por convención; las dependencias son isOpen,
+        // categoriaId y nivel (ATTA Teams). Con la caché por nivel, cambiar
+        // de pestaña pinta al instante sin reconsultar.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isOpen, categoriaId])
+    }, [isOpen, categoriaId, nivel])
+
+    // Precarga en paralelo los niveles que falten (ATTA Teams) para que
+    // cambiar de pestaña no espere a la BD. Se lanza al abrir o cambiar de
+    // categoría; no depende de `nivel` a propósito.
+    useEffect(() => {
+        if (!isOpen || !categoriaId || !esAttaTeams) return
+        for (const n of [1, 2, 3] as const) {
+            if (!cacheNiveles.current[claveCache(n)]) cargar(n)
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen, categoriaId, esAttaTeams])
 
     // ── Lógica del modo manual de siembra ─────────────────────────────────
 
@@ -333,20 +499,29 @@ export default function LlavesTorneoModal({
     )
 
     /** ¿Todos los slots de R1 están llenos? (BYE = null, no es "lleno"; debe haber un participante). */
-    // Partido seleccionado por el wizard. Construye el "pseudo-grupo" de un
-    // solo partido para `EncuentroEquiposWizardModal`, que internamente hace
-    // un PUT por partido (en este caso, un único PUT).
-    // Debe ir ANTES de cualquier early return para cumplir las Rules of Hooks.
-    const partidoDelWizard = useMemo(() => {
-        if (wizardPartidoId == null) return null
-        return partidos.find(p => p.id === wizardPartidoId) ?? null
-    }, [wizardPartidoId, partidos])
-
     const siembraCompleta = useMemo(() => {
-        const slotsR1 = Object.values(siembra)
-        if (slotsR1.length === 0) return false
-        return slotsR1.every(s => s.local !== null && s.visitante !== null)
-    }, [siembra])
+        if (pool.length === 0) return false
+        const valores = Object.values(siembra)
+        if (valores.length === 0) return false
+        // Con pases directos NO exigimos llenar toda la capacidad: basta
+        // con que TODOS los clasificados estén colocados. Los cupos que
+        // sobran (capacidad − clasificados) quedan como byes intencionales
+        // que el backend resuelve al guardar la siembra.
+        const asignados = valores.reduce(
+            (acc, s) => acc + (s.local !== null ? 1 : 0) + (s.visitante !== null ? 1 : 0),
+            0
+        )
+        return asignados >= pool.length
+    }, [siembra, pool])
+
+    /** Hay partidos de R1 aún PENDIENTES con cupos vacíos: al guardar la
+     * siembra esos huecos se confirman como pases directos (walkover). */
+    const hayHuecosPorConfirmar = useMemo(() =>
+        obtenerPrimeraRonda(partidos).some(p =>
+            p.estado === 'PENDIENTE' &&
+            ((siembra[p.id]?.local ?? null) === null || (siembra[p.id]?.visitante ?? null) === null)
+        ),
+    [partidos, siembra])
 
     /** Validación post-operación: ningún partido tiene al mismo participante en ambos lados. */
     const validarSinDuplicados = (estado: Record<number, SiembraSlot>): { ok: boolean; partidoId?: number } => {
@@ -463,7 +638,7 @@ export default function LlavesTorneoModal({
     const handleGuardarSiembra = async () => {
         if (!torneo || !categoriaId) return
         if (!siembraCompleta) {
-            toast.error('Completa todos los slots de la primera ronda antes de guardar')
+            toast.error('Falta por colocar clasificados: revisa el pool antes de guardar')
             return
         }
         setIsSavingSiembra(true)
@@ -473,15 +648,22 @@ export default function LlavesTorneoModal({
                 participante_local_id: slots.local,
                 participante_visitante_id: slots.visitante
             }))
+            // Optimista: pintamos la siembra al instante; la BD reconcilia
+            // en segundo plano (el túnel tarda en responder).
+            aplicarSiembraLocal(partidosPayload.map(p => ({ id: p.id, localId: p.participante_local_id, visitanteId: p.participante_visitante_id })))
             const r = await fetch(`/api/torneos/${torneo.id}/llaves/reordenar`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ categoriaId: Number(categoriaId), partidos: partidosPayload })
+                body: JSON.stringify({
+                    categoriaId: Number(categoriaId),
+                    partidos: partidosPayload,
+                    ...(esAttaTeams ? { nivel } : {})
+                })
             })
             const d = await r.json()
             if (!r.ok) throw new Error(d.error)
             toast.success('Siembra guardada')
-            cargar()
+            cargar(undefined, true)
         } catch (e) {
             toast.error(e instanceof Error ? e.message : 'Error al guardar la siembra')
         } finally {
@@ -494,13 +676,16 @@ export default function LlavesTorneoModal({
         if (!confirm('¿Eliminar el bracket completo? Esta acción no se puede deshacer.')) return
         setIsDeletingLlaves(true)
         try {
-            const r = await fetch(`/api/torneos/${torneo.id}/llaves/reordenar?categoriaId=${categoriaId}`, {
+            const r = await fetch(`/api/torneos/${torneo.id}/llaves/reordenar?categoriaId=${categoriaId}${esAttaTeams ? `&nivel=${nivel}` : ''}`, {
                 method: 'DELETE'
             })
             const d = await r.json()
             if (!r.ok) throw new Error(d.error)
             toast.success('Bracket eliminado')
-            cargar()
+            // Optimista: limpiamos al instante. SIN refetch: pedirDatos
+            // recrearía el bracket vacío automáticamente.
+            invalidarCache(nivel)
+            setPartidos([]); setPool([]); setSiembra({}); setHasChangesSiembra(false)
         } catch (e) {
             toast.error(e instanceof Error ? e.message : 'Error al eliminar las llaves')
         } finally {
@@ -520,26 +705,47 @@ export default function LlavesTorneoModal({
         setIsRegeneratingSiembra(true)
         try {
             const primeraRonda = obtenerPrimeraRonda(partidos)
+            // Reparte los pases directos UNIFORMEMENTE entre los cruces
+            // (uno por partido cuando alcanza) para que ningún cruce quede
+            // doblemente vacío: cada bye acompaña a un rival real.
+            const capacidad = primeraRonda.length * 2
+            const huecos = Math.max(0, capacidad - pool.length)
+            const posicionesHueco = new Set<number>()
+            for (let i = 0; i < huecos; i++) {
+                posicionesHueco.add(Math.min(capacidad - 1, Math.round(((i + 0.5) * capacidad) / huecos)))
+            }
             const nuevaSiembra: Record<number, SiembraSlot> = {}
+            let cursor = 0
             for (let i = 0; i < primeraRonda.length; i++) {
-                const localId = pool[2 * i]?.participante?.id ?? null
-                const visitanteId = pool[2 * i + 1]?.participante?.id ?? null
-                nuevaSiembra[primeraRonda[i].id] = { local: localId, visitante: visitanteId }
+                const idxLocal = 2 * i
+                const idxVisitante = 2 * i + 1
+                nuevaSiembra[primeraRonda[i].id] = {
+                    local: posicionesHueco.has(idxLocal) ? null : pool[cursor++]?.participante?.id ?? null,
+                    visitante: posicionesHueco.has(idxVisitante) ? null : pool[cursor++]?.participante?.id ?? null,
+                }
             }
             const payloadPartidos = primeraRonda.map(p => ({
                 id: p.id,
                 participante_local_id: nuevaSiembra[p.id]?.local ?? null,
                 participante_visitante_id: nuevaSiembra[p.id]?.visitante ?? null,
             }))
+            // Optimista: pintamos la nueva siembra al instante.
+            setSiembra(nuevaSiembra)
+            setHasChangesSiembra(false)
+            aplicarSiembraLocal(payloadPartidos.map(p => ({ id: p.id, localId: p.participante_local_id, visitanteId: p.participante_visitante_id })))
             const r = await fetch(`/api/torneos/${torneo.id}/llaves/reordenar`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ categoriaId: Number(categoriaId), partidos: payloadPartidos }),
+                body: JSON.stringify({
+                    categoriaId: Number(categoriaId),
+                    partidos: payloadPartidos,
+                    ...(esAttaTeams ? { nivel } : {})
+                }),
             })
             const d = await r.json()
             if (!r.ok) throw new Error(d.error)
             toast.success('Siembra regenerada')
-            cargar()
+            cargar(undefined, true)
         } catch (e) {
             toast.error(e instanceof Error ? e.message : 'Error al regenerar la siembra')
         } finally {
@@ -582,6 +788,9 @@ export default function LlavesTorneoModal({
                 })
                 const d = await r.json()
                 if (!r.ok) throw new Error(d.error)
+                // Optimista: ganador pintado y avanzado a la siguiente ronda
+                // sin esperar el refetch completo.
+                aplicarGanadorLocal(Number(partidoId), ganadorParticipanteId)
             }
             setGanadoresBorrador({})
             if (pendientes.length > 0) {
@@ -589,7 +798,7 @@ export default function LlavesTorneoModal({
             } else {
                 toast.success('Nada nuevo que guardar')
             }
-            cargar()
+            cargar(undefined, true)
         } catch (e) {
             toast.error(e instanceof Error ? e.message : 'No se pudo confirmar la llave')
         } finally {
@@ -648,71 +857,79 @@ export default function LlavesTorneoModal({
         return m
     }, [siembra, participantesById])
 
+    /**
+     * Construye las rondas del documento (impresión/PNG) desde los datos
+     * de los partidos. El orden de rondas se deduce del tamaño: la primera
+     * ronda es la que MÁS partidos tiene (misma convención que
+     * obtenerPrimeraRonda), y de ahí hacia la final.
+     */
+    const construirRondasDoc = (): RondaLlaveDoc[] => {
+        const rondasMap = new Map<string, typeof partidos>()
+        for (const p of partidos) {
+            const k = p.ronda_eliminacion || 'Ronda'
+            if (!rondasMap.has(k)) rondasMap.set(k, [])
+            rondasMap.get(k)!.push(p)
+        }
+        return [...rondasMap.entries()]
+            .sort((a, b) => b[1].length - a[1].length)
+            .map(([nombre, lista]) => ({
+                nombre,
+                partidos: lista
+                    .slice()
+                    .sort((a, b) => (a.posicion_llave ?? 0) - (b.posicion_llave ?? 0))
+                    .map(p => ({
+                        localNombre: p.participante_local ? nombreParticipanteSiembra(p.participante_local) : null,
+                        localClub: p.participante_local ? clubParticipanteSiembra(p.participante_local) : null,
+                        visitanteNombre: p.participante_visitante ? nombreParticipanteSiembra(p.participante_visitante) : null,
+                        visitanteClub: p.participante_visitante ? clubParticipanteSiembra(p.participante_visitante) : null,
+                        localEsperando: esperaRivalEn(partidos, p, 'LOCAL'),
+                        visitanteEsperando: esperaRivalEn(partidos, p, 'VISITANTE'),
+                        finalizado: p.estado === 'FINALIZADO',
+                        ganaLocal: p.ganador_participante_id == null || !p.participante_local
+                            ? null
+                            : p.ganador_participante_id === p.participante_local.id,
+                    })),
+            }))
+    }
+
+    const construirDoc = (oscuro: boolean) => {
+        if (!torneo) return null
+        const cat = categorias.find(c => c.id.toString() === categoriaId)?.nombre ?? ''
+        const etiquetaNivel = esAttaTeams
+            ? (nivel === 1 ? 'Primera categoría (1º)' : nivel === 2 ? 'Segunda categoría (2º)' : 'Tercera categoría (3º)')
+            : null
+        return construirDocLlaves({
+            torneoNombre: torneo.nombre,
+            // En ATTA Teams la etiqueta de nivel YA es la categoría
+            // (Primera/Segunda/Tercera); mostrar además "Categoría X"
+            // (categoría interna del torneo abierto) solo confunde.
+            categoriaNombre: esAttaTeams ? '' : cat,
+            etiquetaNivel,
+            rondas: construirRondasDoc(),
+            oscuro,
+        })
+    }
+
     const handleDescargar = async () => {
-        if (!llavesRef.current) return
+        // El "screenshot" sale con el modo de la compu: oscuro si la app/sistema
+        // está en oscuro, claro en caso contrario.
+        const oscuro = prefiereModoOscuro()
+        const doc = construirDoc(oscuro)
+        if (!doc) return
         setDescargando(true)
         try {
-            const { toPng } = await import('html-to-image')
-            const originalError = console.error
-            console.error = (...args) => {
-                if (String(args[0]).includes('cssRules')) return
-                originalError(...args)
-            }
-            // La app usa dark mode forzado (clase `dark` en <html>), por lo
-            // que el bracket en pantalla sale oscuro. Para que el screenshot
-            // quede con fondo claro y legible, en el clon (que se crea
-            // dentro de un <iframe> propio) sobrescribimos las variables
-            // CSS con los valores del tema light. El clon es independiente
-            // de la página, así que no se ve afectado en pantalla.
-            // `onClone` existe en html-to-image en runtime aunque no esté
-            // declarado en sus tipos; lo definimos con tipo `any` para
-            // silenciar TS sin perder tipado en el resto de las opciones.
-            const onClone = (clonedDoc: Document) => {
-                // Inyectamos un <style> en el clon que sobrescribe los
-                // tokens de color del tema dark a los del tema light.
-                // El clon se serializa en el PNG, no afecta la página.
-                const style = clonedDoc.createElement('style')
-                style.textContent = `
-                    :root, :host, html.dark, .dark, * {
-                        --color-canvas: #F8FAFC !important;
-                        --color-surface: #FFFFFF !important;
-                        --color-surface-2: #F8FAFC !important;
-                        --color-subtle: #F1F5F9 !important;
-                        --color-line: #E2E8F0 !important;
-                        --color-line-strong: #CBD5E1 !important;
-                        --color-muted: #94A3B8 !important;
-                        --color-fg: #0F172A !important;
-                        --color-fg-muted: #475569 !important;
-                        --color-brand: #2563EB !important;
-                        --color-brand-strong: #1D4ED8 !important;
-                        --color-brand-soft: #EFF6FF !important;
-                        --color-success: #059669 !important;
-                        --color-success-soft: #ECFDF5 !important;
-                        --color-danger: #E11D48 !important;
-                        --color-danger-soft: #FFF1F2 !important;
-                        --color-warning: #D97706 !important;
-                        --color-warning-soft: #FFFBEB !important;
-                        --color-info: #0EA5E9 !important;
-                        --color-info-soft: #F0F9FF !important;
-                        color-scheme: light !important;
-                    }
-                    body, html { background: #F8FAFC !important; color: #0F172A !important; }
-                `
-                clonedDoc.head.appendChild(style)
-            }
-            const dataUrl = await toPng(llavesRef.current, {
-                backgroundColor: '#F8FAFC',
-                pixelRatio: 2,
-                skipFonts: true,
-                filter: (node: Element) => !(node instanceof HTMLLinkElement && node.rel === 'stylesheet'),
-                onClone,
-            } as any)
-            console.error = originalError
-            const link = document.createElement('a')
-            const cat = categorias.find(c => c.id.toString() === categoriaId)?.nombre ?? categoriaId
-            link.download = `llaves-${torneo?.nombre}-${cat}.png`
-            link.href = dataUrl
-            link.click()
+            // Ancho fijo: el doc va en mitades espejadas (como la página):
+            // ~255px por columna + 250px de la final al centro. Así el PNG
+            // incluye TODAS las rondas aunque en pantalla el bracket se
+            // desplace horizontalmente (móvil).
+            const cantidadRondas = new Set(partidos.map(p => p.ronda_eliminacion || 'Ronda')).size
+            const ancho = Math.max(900, cantidadRondas * 255 + 420)
+            // En ATTA Teams los tres brackets comparten la categoría interna
+            // ("primera"); el nombre del archivo distingue por nivel.
+            const sufijoArchivo = esAttaTeams
+                ? `-${nivel === 1 ? 'primera' : nivel === 2 ? 'segunda' : 'tercera'}-categoria`
+                : `-${categorias.find(c => c.id.toString() === categoriaId)?.nombre ?? categoriaId}`
+            await descargarPngDeDoc(doc, ancho, `llaves-${torneo?.nombre}${sufijoArchivo}.png`, oscuro ? '#0B1120' : '#ffffff')
             toast.success('Imagen descargada')
         } catch (error) {
             console.error('Error al descargar:', error)
@@ -723,66 +940,152 @@ export default function LlavesTorneoModal({
     }
 
     const handleImprimir = () => {
-        if (!llavesRef.current) return
-        const printWindow = window.open('', '_blank', 'width=1400,height=900')
-        if (!printWindow) {
-            toast.error('Permite ventanas emergentes para imprimir')
+        // Papel: siempre versión clara.
+        const doc = construirDoc(false)
+        if (!doc) return
+        if (!abrirImpresion(doc)) toast.error('Permite ventanas emergentes para imprimir')
+    }
+
+    /** Hojas de alineación para las llaves: una página por encuentro con
+     *  ambos equipos ya definidos. A diferencia de los grupos, aquí NO se
+     *  configura la alineación en el sistema: se imprime la serie ATTA
+     *  (1 dobles + 4 individuales, o el dobles único) en blanco y son los
+     *  capitanes quienes anotan a mano qué jugador ocupa cada letra. */
+    const handleImprimirHojasAlineacion = () => {
+        if (!torneo) return
+        const escapar = (t: unknown) => String(t)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+
+        const modalidadSerie = torneo.modalidad === 'DOBLES' ? 'DOBLES' : 'EQUIPOS'
+        const matchups = matchupsEstandar(modalidadSerie)
+        const categoriaNombre = categorias.find(c => c.id.toString() === categoriaId)?.nombre ?? ''
+
+        const encuentros = partidos.filter(p => p.participante_local && p.participante_visitante)
+        if (encuentros.length === 0) {
+            toast.error('No hay encuentros con ambos equipos definidos todavía')
             return
         }
-        const clone = llavesRef.current.cloneNode(true) as HTMLElement
-        // Forzamos el tema light en el documento de impresión con un <style>
-        // propio, ya que la ventana nueva no comparte los tokens de la app.
-        printWindow.document.write(`
-            <!DOCTYPE html><html><head><meta charset="utf-8"/>
-            <title>Llaves - ${torneo?.nombre}</title>
-            <style>
-                * { box-sizing: border-box; }
-                :root {
-                    --color-canvas: #F8FAFC;
-                    --color-surface: #FFFFFF;
-                    --color-surface-2: #F8FAFC;
-                    --color-subtle: #F1F5F9;
-                    --color-line: #E2E8F0;
-                    --color-line-strong: #CBD5E1;
-                    --color-muted: #94A3B8;
-                    --color-fg: #0F172A;
-                    --color-fg-muted: #475569;
-                    --color-brand: #2563EB;
-                    --color-brand-strong: #1D4ED8;
-                    --color-brand-soft: #EFF6FF;
-                    --color-success: #059669;
-                    --color-success-soft: #ECFDF5;
-                    --color-warning: #D97706;
-                    --color-warning-soft: #FFFBEB;
-                    --color-info: #0EA5E9;
-                    --color-info-soft: #F0F9FF;
-                }
-                body { margin: 0; padding: 24px; background: #F8FAFC; color: #0F172A; font-family: system-ui, -apple-system, sans-serif; }
-                h1 { margin: 0 0 4px; font-size: 18px; }
-                p { margin: 0 0 16px; color: #475569; font-size: 12px; }
-                @page { size: A3 landscape; margin: 12mm; }
-                @media print {
-                    body { padding: 0; }
-                    .no-print { display: none !important; }
-                }
-            </style></head><body>
-                <h1>${torneo?.nombre}</h1>
-                <p>Llaves de eliminación${esAbierto ? ' · abierto' : ''}</p>
-                ${clone.outerHTML}
-                <script>setTimeout(() => { window.print(); }, 250);</script>
-            </body></html>
-        `)
-        printWindow.document.close()
+
+        const paginas = encuentros.map(partido => {
+            const local = partido.participante_local
+            const visitante = partido.participante_visitante
+            if (!local || !visitante) return ''
+            const miembrosLocal = (local.miembros ?? []).map(m => m.jugadores.nombre)
+            const miembrosVisit = (visitante.miembros ?? []).map(m => m.jugadores.nombre)
+
+            const filas = matchups.map((m, i) => {
+                const letrasLoc = Array.isArray(m.cruces.local) ? m.cruces.local.join('+') : m.cruces.local
+                const letrasVis = Array.isArray(m.cruces.visitante) ? m.cruces.visitante.join('+') : m.cruces.visitante
+                const lineas = m.tipo === 'DOBLES' ? 2 : 1
+                const celdaNombres = Array.from({ length: lineas }).map(() =>
+                    '<div class="nombre-linea"></div>',
+                ).join('')
+                return `
+                <tr>
+                  <td class="num">${i + 1}</td>
+                  <td class="tipo">${m.tipo === 'DOBLES' ? 'Dobles' : 'Individual'}</td>
+                  <td class="cruce"><span class="letra-chip">${escapar(letrasLoc)}</span><span class="vs-sep">vs</span><span class="letra-chip">${escapar(letrasVis)}</span></td>
+                  <td class="nombres">${celdaNombres}</td>
+                  <td class="nombres">${celdaNombres}</td>
+                </tr>`
+            }).join('')
+
+            const listaMiembros = (nombres: string[]) => nombres.length > 0
+                ? `<ul class="equipo-integrantes">${nombres.map(n => `<li>${escapar(n)}</li>`).join('')}</ul>`
+                : ''
+
+            const rondaLabel = escapar(partido.ronda_eliminacion || 'Llaves')
+
+            return `
+            <section class="page">
+              <header class="cabecera">
+                <img class="logo logo-izq" src="/logo.jpg" alt="ATTA" onerror="this.style.visibility='hidden'" />
+                <div class="titulo-central">
+                  <div class="titulo-torneo">${escapar(torneo.nombre)}</div>
+                  <div class="titulo-sub">Hoja de alineación · Llaves · ${rondaLabel} · Encuentro #${partido.posicion_llave ?? '—'}</div>
+                </div>
+                <img class="logo logo-der" src="/templates/escudo-panama.png" alt="Alcaldía de Panamá" onerror="this.style.visibility='hidden'" />
+              </header>
+
+              <div class="enfrentamiento">
+                <div class="lado">
+                  <div class="lado-tag">LOCAL · ABC</div>
+                  <div class="lado-nombre">${escapar(nombreParticipanteSiembra(local))}</div>
+                  ${listaMiembros(miembrosLocal)}
+                </div>
+                <div class="centro-vs">VS</div>
+                <div class="lado lado-der">
+                  <div class="lado-tag">VISITANTE · XYZ</div>
+                  <div class="lado-nombre">${escapar(nombreParticipanteSiembra(visitante))}</div>
+                  ${listaMiembros(miembrosVisit)}
+                </div>
+              </div>
+
+              <table class="serie">
+                <thead>
+                  <tr>
+                    <th class="th-num">N°</th>
+                    <th class="th-tipo">Sub-partido</th>
+                    <th class="th-cruce">Cruce</th>
+                    <th>Jugador(es) del equipo local</th>
+                    <th>Jugador(es) del equipo visitante</th>
+                  </tr>
+                </thead>
+                <tbody>${filas}</tbody>
+              </table>
+
+              <div class="pie-nota">
+                El capitán de cada equipo anota el nombre del jugador que ocupa cada letra
+                (<span class="mono">A·B·C</span> local, <span class="mono">X·Y·Z</span> visitante)
+                y entrega esta hoja al operador antes del inicio del encuentro.
+              </div>
+              <div class="pie-espacio"></div>
+            </section>`
+        }).join('')
+
+        const ventana = window.open('', '_blank', 'width=1200,height=1500')
+        if (!ventana) { toast.error('El navegador bloqueó la ventana de impresión'); return }
+        ventana.document.write(`<!doctype html><html><head><title>Hojas de alineación</title><style>
+            @page{size:letter portrait;margin:10mm}
+            html,body{width:8.5in;min-height:11in;margin:0;padding:0;box-sizing:border-box}
+            body{font-family:Arial,sans-serif;color:#0f172a;margin:0;padding:0}
+            .page{page-break-after:always;padding:0}.page:last-child{page-break-after:auto}
+            .cabecera{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:6px 8px 12px;border-bottom:2.5px solid #0f172a}
+            .logo{height:96px;object-fit:contain}
+            .titulo-central{flex:1;text-align:center}
+            .titulo-torneo{font-size:36px;font-weight:bold;font-style:italic;letter-spacing:.5px;line-height:1.05}
+            .titulo-sub{font-size:15px;color:#475569;margin-top:5px;letter-spacing:1px}
+            .enfrentamiento{display:flex;align-items:stretch;gap:14px;margin-top:16px}
+            .lado{flex:1;border:2.5px solid #0f172a;border-radius:6px;padding:12px 14px}
+            .lado-der{text-align:right}
+            .lado-tag{font-size:11px;font-weight:bold;letter-spacing:1.5px;color:#475569}
+            .lado-nombre{font-size:26px;font-weight:bold;line-height:1.1;margin-top:3px}
+            ul.equipo-integrantes{list-style:none;padding:0;margin:6px 0 0 0;font-size:13px;color:#334155;line-height:1.35}
+            ul.equipo-integrantes li:before{content:"· ";color:#94a3b8}
+            .centro-vs{display:flex;align-items:center;font-size:30px;font-weight:bold;color:#94a3b8}
+            table.serie{width:100%;border-collapse:collapse;margin-top:18px}
+            table.serie th,table.serie td{border:2.5px solid #0f172a;padding:14px 12px;font-size:15px;vertical-align:middle}
+            table.serie thead th{background:#f1f5f9;text-align:center;font-size:13px;letter-spacing:.5px}
+            th.th-num,td.num{width:44px;text-align:center;font-weight:bold;font-size:20px}
+            th.th-tipo,td.tipo{width:110px;text-align:center;font-weight:bold}
+            th.th-cruce,td.cruce{width:170px;text-align:center}
+            .letra-chip{display:inline-block;border:2px solid #0f172a;border-radius:4px;padding:2px 8px;font-family:'Courier New',monospace;font-weight:bold;font-size:17px;background:#f8fafc}
+            .vs-sep{margin:0 7px;color:#64748b;font-size:13px;font-weight:normal}
+            td.nombres{height:64px}
+            td.nombres .nombre-linea{border-bottom:2.5px solid #94a3b8;height:34px;margin:2px 0}
+            .pie-nota{font-size:13px;color:#475569;margin-top:20px;line-height:1.45;padding:0 4px}
+            .pie-nota .mono{font-family:'Courier New',monospace;font-weight:bold;color:#0f172a}
+            .pie-espacio{height:0.6in}
+            @media print{body{padding:0}}
+        </style></head><body>${paginas}<script>window.onload=()=>window.print()<\/script></body></html>`)
+        ventana.document.close()
     }
 
     if (!isOpen || !torneo) return null
 
     const numBorradores = Object.keys(ganadoresBorrador).length
     const hayLlaves = partidos.length > 0
-    // DOBLES y EQUIPOS usan sub-detalles; solo en esos torneos el wizard
-    // de alineación aplica. Para INDIVIDUAL no se renderiza el botón ABC/XYZ.
-    const permiteAlineacion = torneo?.modalidad === 'DOBLES' || torneo?.modalidad === 'EQUIPOS'
-    const onConfigurarAlineacion = (partidoId: number) => setWizardPartidoId(partidoId)
 
     return (
         <Modal
@@ -791,6 +1094,7 @@ export default function LlavesTorneoModal({
             title="Llaves de eliminación"
             description="Arrastra ganadores como borrador y confirma una sola vez"
             size="full"
+            navegacionInferior={<NavegacionModales activo="llaves" onNavegar={onNavegar} />}
         >
             <div className="-mx-5 -mt-5 mb-4 card-flush overflow-hidden">
                 <div className="flex flex-wrap items-end gap-3 p-3 bg-subtle">
@@ -806,7 +1110,33 @@ export default function LlavesTorneoModal({
                             ))}
                         </Select>
                     )}
-                    {esAbierto && (
+                    {esAttaTeams && (
+                        <div className="flex flex-wrap items-end gap-3 flex-1">
+                            <div>
+                                <span className="label">Llave</span>
+                                <div className="flex rounded-md border border-line overflow-hidden">
+                                    {([1, 2, 3] as const).map(n => (
+                                        <button
+                                            key={n}
+                                            type="button"
+                                            onClick={() => setNivel(n)}
+                                            className={`px-4 py-2 text-sm font-medium transition-colors ${
+                                                nivel === n
+                                                    ? 'bg-brand text-white'
+                                                    : 'text-fg-muted hover:text-fg hover:bg-subtle'
+                                            }`}
+                                        >
+                                            {n === 1 ? '1ª categoría' : n === 2 ? '2ª categoría' : '3ª categoría'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="banner banner-info text-xs flex-1 min-w-[220px]">
+                                Cada llave toma una posición de cada grupo: el 1º a <b>Primera categoría</b>, el 2º a <b>Segunda</b> y el 3º a <b>Tercera</b>.
+                            </div>
+                        </div>
+                    )}
+                    {esAbierto && !esAttaTeams && (
                         <div className="banner banner-info text-xs flex-1">
                             Torneo abierto: las llaves se arman en <b>primera categoría</b> mezclando a todos los inscritos.
                         </div>
@@ -815,9 +1145,12 @@ export default function LlavesTorneoModal({
                         variant="primary"
                         onClick={handleGuardarSiembra}
                         isLoading={isSavingSiembra}
-                        disabled={!hasChangesSiembra || !siembraCompleta}
+                        disabled={!siembraCompleta || (!hasChangesSiembra && !hayHuecosPorConfirmar)}
                         leadingIcon={<CheckBadgeIcon className="h-4 w-4" />}
-                        title={!siembraCompleta ? 'Completa todos los slots de la primera ronda' : (!hasChangesSiembra ? 'Sin cambios por guardar' : 'Guardar siembra')}
+                        title={!siembraCompleta
+                            ? 'Coloca a todos los clasificados en los cruces'
+                            : (hayHuecosPorConfirmar ? 'Confirma la siembra: los cupos vacíos quedan como pase directo'
+                                : (!hasChangesSiembra ? 'Sin cambios por guardar' : 'Guardar siembra'))}
                     >
                         {isSavingSiembra ? 'Guardando...' : 'Guardar siembra'}
                     </Button>
@@ -868,7 +1201,31 @@ export default function LlavesTorneoModal({
                     >
                         Imprimir
                     </Button>
+                    {(torneo.modalidad === 'DOBLES' || torneo.modalidad === 'EQUIPOS' || torneo.modalidad === 'ATTA_TEAMS') && hayLlaves && (
+                        <Button
+                            variant="secondary"
+                            onClick={handleImprimirHojasAlineacion}
+                            disabled={!hayLlaves}
+                            leadingIcon={<UsersIcon className="h-4 w-4" />}
+                            title="Una hoja por encuentro: la serie ATTA en blanco para que los capitanes anoten quién juega cada letra"
+                        >
+                            Hojas de alineación
+                        </Button>
+                    )}
                 </div>
+
+                {/* Guía de la etapa de llaves: siempre visible. */}
+                {hayLlaves && (
+                    <div className="banner banner-info text-xs leading-relaxed">
+                        <span>
+                            <b>Llaves paso a paso:</b>{' '}
+                            <b>1.</b> Arrastra los clasificados a los cruces de primera ronda → <b>2.</b> «Guardar siembra» →{' '}
+                            <b>3.</b> Imprime las <b>«Hojas de alineación»</b> y entrégalas a los capitanes de cada encuentro →{' '}
+                            <b>4.</b> Para cada partido, arrastra al ganador sobre su propia tarjeta → <b>5.</b> «Confirmar resultados»:
+                            el ganador avanza solo a la ronda siguiente. Las rondas futuras se llenan solas cuando les toca.
+                        </span>
+                    </div>
+                )}
             </div>
 
             {confirmando && (
@@ -879,10 +1236,7 @@ export default function LlavesTorneoModal({
             )}
 
             {loading ? (
-                <div className="py-16 text-center text-fg-muted">
-                    <div className="inline-block h-4 w-4 mr-2 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                    Preparando bracket...
-                </div>
+                <CargandoPantalla titulo="Preparando bracket" mensajes={['Consultando llaves…', 'Cargando clasificados…', 'Armando los cruces…']} />
             ) : !hayLlaves ? (
                 <div className="py-12 text-center text-fg-muted">
                     {generando
@@ -890,11 +1244,7 @@ export default function LlavesTorneoModal({
                         : 'No se pudo crear el bracket. Verifica que los grupos estén finalizados.'}
                 </div>
             ) : (
-                // Este nodo es el que capturamos al imprimir/descargar.
-                <div
-                    ref={llavesRef}
-                    className="bg-canvas rounded-xl p-6 overflow-x-auto"
-                >
+                <div className="bg-canvas rounded-xl p-6 overflow-x-auto">
                     <ManualSiembraView
                         partidosR1={obtenerPrimeraRonda(partidos)}
                         siembra={siembra}
@@ -919,30 +1269,16 @@ export default function LlavesTorneoModal({
                         conflictoPorParticipante={conflictoPorParticipanteSiembra}
                         participantesById={participantesById}
                         siembraCompleta={siembraCompleta}
-                        permiteAlineacion={permiteAlineacion}
-                        onConfigurarAlineacion={onConfigurarAlineacion}
+                        rondas={obtenerRondasOrdenadas(partidos)}
+                        hasChangesSiembra={hasChangesSiembra}
+                        arrastre={arrastre}
+                        setArrastre={setArrastre}
+                        ganadoresBorrador={ganadoresBorrador}
+                        setGanadoresBorrador={setGanadoresBorrador}
+                        tieneFinalizados={tieneFinalizados}
+                        onEditarSiembra={() => setHasChangesSiembra(true)}
                     />
                 </div>
-            )}
-            {partidoDelWizard && partidoDelWizard.participante_local && partidoDelWizard.participante_visitante && (
-                <EncuentroEquiposWizardModal
-                    isOpen={wizardPartidoId != null}
-                    onClose={() => setWizardPartidoId(null)}
-                    torneo={torneo ? { id: torneo.id, nombre: torneo.nombre } : { id: 0, nombre: '' }}
-                    categoria={categorias.find(c => c.id.toString() === categoriaId)?.nombre ?? ''}
-                    grupoId={0}
-                    equipos={{
-                        local: partidoDelWizard.participante_local as any,
-                        visitante: partidoDelWizard.participante_visitante as any,
-                    }}
-                    partidos={[{
-                        id: partidoDelWizard.id,
-                        orden: partidoDelWizard.posicion_llave ?? 0,
-                        detalles: (partidoDelWizard.detalles ?? []) as any,
-                    }]}
-                    modalidad={(torneo?.modalidad === 'DOBLES' || torneo?.modalidad === 'EQUIPOS') ? torneo.modalidad : 'EQUIPOS'}
-                    onGuardado={() => { setWizardPartidoId(null); cargar() }}
-                />
             )}
         </Modal>
     )
@@ -984,8 +1320,14 @@ function ManualSiembraView({
     conflictoPorParticipante,
     participantesById,
     siembraCompleta,
-    permiteAlineacion,
-    onConfigurarAlineacion,
+    rondas,
+    hasChangesSiembra,
+    arrastre,
+    setArrastre,
+    ganadoresBorrador,
+    setGanadoresBorrador,
+    tieneFinalizados,
+    onEditarSiembra,
 }: {
     partidosR1: Partido[]
     siembra: Record<number, SiembraSlot>
@@ -1010,9 +1352,57 @@ function ManualSiembraView({
     conflictoPorParticipante: Map<number, boolean>
     participantesById: Map<number, Participante>
     siembraCompleta: boolean
-    permiteAlineacion: boolean
-    onConfigurarAlineacion: (partidoId: number) => void
+    /** TODAS las rondas del bracket, de la primera a la final. */
+    rondas: [string, Partido[]][]
+    hasChangesSiembra: boolean
+    arrastre: { partidoId: number; participanteId: number } | null
+    setArrastre: (a: { partidoId: number; participanteId: number } | null) => void
+    ganadoresBorrador: Record<number, number>
+    setGanadoresBorrador: React.Dispatch<React.SetStateAction<Record<number, number>>>
+    tieneFinalizados: boolean
+    onEditarSiembra: () => void
 }) {
+    // Modo ARMAR: pool + editor de R1 (mientras falten slots o haya cambios
+    // sin guardar). Modo JUGAR: bracket completo con todas las rondas — las
+    // futuras se ven vacías ("Por definir") y solo se llenan cuando la
+    // ronda anterior finaliza y su ganador avanza.
+    // Si hay partidos de R1 pendientes con cupos vacíos, seguimos en modo
+    // armar: guardar la siembra es lo que confirma esos huecos como byes.
+    const hayHuecosPendientes = partidosR1.some(p =>
+        p.estado === 'PENDIENTE' &&
+        ((siembra[p.id]?.local ?? null) === null || (siembra[p.id]?.visitante ?? null) === null)
+    )
+    const modoArmado = !siembraCompleta || hasChangesSiembra || hayHuecosPendientes
+
+    if (!modoArmado && rondas.length > 0) {
+        return (
+            <div className="flex flex-col gap-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-success text-sm font-medium">
+                        <CheckBadgeIcon className="h-4 w-4" />
+                        Cruces listos · para registrar un resultado, arrastra el ganador sobre su propio partido y pulsa «Confirmar»
+                    </span>
+                    {!tieneFinalizados && (
+                        <button
+                            type="button"
+                            onClick={onEditarSiembra}
+                            className="text-xs font-medium text-brand hover:underline shrink-0"
+                        >
+                            Editar cruce de primera ronda
+                        </button>
+                    )}
+                </div>
+                <BracketLayout
+                    rondas={rondas}
+                    arrastre={arrastre}
+                    setArrastre={setArrastre}
+                    ganadoresBorrador={ganadoresBorrador}
+                    setGanadoresBorrador={setGanadoresBorrador}
+                />
+            </div>
+        )
+    }
+
     if (partidosR1.length === 0) {
         return <div className="py-12 text-center text-fg-muted">No hay partidos de primera ronda</div>
     }
@@ -1050,7 +1440,8 @@ function ManualSiembraView({
             <div className="flex flex-wrap items-center gap-2 text-sm">
                 {siembraCompleta ? (
                     <span className="inline-flex items-center gap-1.5 text-success">
-                        <CheckBadgeIcon className="h-4 w-4" /> Siembra completa
+                        <CheckBadgeIcon className="h-4 w-4" />
+                        Siembra completa{slotsVacios > 0 ? ` · ${slotsVacios} cupo(s) quedarán como pase directo al guardar` : ''}
                     </span>
                 ) : (
                     <span className="banner banner-warning text-xs inline-flex items-center gap-1.5">
@@ -1114,10 +1505,28 @@ function ManualSiembraView({
                     handleDropOnSlot={handleDropOnSlot}
                     menuSiembra={menuSiembra}
                     setMenuSiembra={setMenuSiembra}
-                    permiteAlineacion={permiteAlineacion}
-                    onConfigurarAlineacion={onConfigurarAlineacion}
                 />
             </div>
+
+            {/* Vista completa del bracket: TODAS las rondas visibles desde
+                ya. Las futuras se ven vacías ("Por definir") y solo se
+                llenan cuando la ronda anterior finalice. Mientras se arma
+                la siembra es solo lectura. */}
+            {rondas.length > 1 && (
+                <div className="border-t border-line pt-4">
+                    <div className="text-xs font-bold text-fg-muted uppercase tracking-wider mb-2">
+                        Vista completa · todas las rondas (se desbloquean en orden)
+                    </div>
+                    <BracketLayout
+                        rondas={rondas}
+                        arrastre={null}
+                        setArrastre={() => {}}
+                        ganadoresBorrador={{}}
+                        setGanadoresBorrador={() => {}}
+                        soloLectura
+                    />
+                </div>
+            )}
 
             {/* Menú contextual por clic en un slot ocupado */}
             {menuSiembra && (() => {
@@ -1295,8 +1704,6 @@ function ManualBracketR1({
     handleDropOnSlot,
     menuSiembra,
     setMenuSiembra,
-    permiteAlineacion,
-    onConfigurarAlineacion,
 }: {
     partidosR1: Partido[]
     siembra: Record<number, SiembraSlot>
@@ -1313,8 +1720,6 @@ function ManualBracketR1({
     handleDropOnSlot: (destino: SlotRef) => void
     menuSiembra: { slot: SlotRef; participanteId: number } | null
     setMenuSiembra: (m: { slot: SlotRef; participanteId: number } | null) => void
-    permiteAlineacion: boolean
-    onConfigurarAlineacion: (partidoId: number) => void
 }) {
     const cupo = partidosR1.length * 2
     const limiteUpper = cupo / 4
@@ -1342,8 +1747,6 @@ function ManualBracketR1({
                             handleDropOnSlot={handleDropOnSlot}
                             menuSiembra={menuSiembra}
                             setMenuSiembra={setMenuSiembra}
-                            permiteAlineacion={permiteAlineacion}
-                            onConfigurarAlineacion={onConfigurarAlineacion}
                         />
                     ))}
                 </div>
@@ -1370,8 +1773,6 @@ function ManualBracketR1({
                         handleDropOnSlot={handleDropOnSlot}
                         menuSiembra={menuSiembra}
                         setMenuSiembra={setMenuSiembra}
-                        permiteAlineacion={permiteAlineacion}
-                        onConfigurarAlineacion={onConfigurarAlineacion}
                     />
                 ))}
             </div>
@@ -1401,8 +1802,6 @@ function ManualBracketR1({
                         handleDropOnSlot={handleDropOnSlot}
                         menuSiembra={menuSiembra}
                         setMenuSiembra={setMenuSiembra}
-                        permiteAlineacion={permiteAlineacion}
-                        onConfigurarAlineacion={onConfigurarAlineacion}
                     />
                 ))}
             </div>
@@ -1427,8 +1826,6 @@ function LlaveCardEditable({
     handleDropOnSlot,
     menuSiembra,
     setMenuSiembra,
-    permiteAlineacion,
-    onConfigurarAlineacion,
 }: {
     partido: Partido
     slots: SiembraSlot
@@ -1443,9 +1840,6 @@ function LlaveCardEditable({
     handleDropOnSlot: (destino: SlotRef) => void
     menuSiembra: { slot: SlotRef; participanteId: number } | null
     setMenuSiembra: (m: { slot: SlotRef; participanteId: number } | null) => void
-    /** DOBLES/EQUIPOS: el partido tiene sub-detalles y se puede configurar alineación. */
-    permiteAlineacion?: boolean
-    onConfigurarAlineacion?: (partidoId: number) => void
 }) {
     const slotLocal: SlotRef = { partidoId: partido.id, lado: 'local' }
     const slotVisitante: SlotRef = { partidoId: partido.id, lado: 'visitante' }
@@ -1492,16 +1886,6 @@ function LlaveCardEditable({
             <div className="absolute top-0.5 right-1.5 text-[9px] text-fg-muted font-mono">
                 #{partido.posicion_llave}
             </div>
-            {permiteAlineacion && onConfigurarAlineacion && (
-                <button
-                    type="button"
-                    onClick={e => { e.stopPropagation(); onConfigurarAlineacion(partido.id) }}
-                    title="Configurar alineación (ABC / XYZ)"
-                    className="absolute bottom-1 right-1 inline-flex items-center justify-center h-5 w-5 rounded text-fg-muted hover:text-brand hover:bg-subtle transition-colors"
-                >
-                    <UsersIcon className="h-3.5 w-3.5" />
-                </button>
-            )}
         </div>
     )
 }
@@ -1608,16 +1992,15 @@ function BracketLayout({
     setArrastre,
     ganadoresBorrador,
     setGanadoresBorrador,
-    permiteAlineacion,
-    onConfigurarAlineacion,
+    soloLectura = false,
 }: {
     rondas: [string, Partido[]][]
     arrastre: { partidoId: number; participanteId: number } | null
     setArrastre: (a: { partidoId: number; participanteId: number } | null) => void
     ganadoresBorrador: Record<number, number>
     setGanadoresBorrador: React.Dispatch<React.SetStateAction<Record<number, number>>>
-    permiteAlineacion: boolean
-    onConfigurarAlineacion: (partidoId: number) => void
+    /** Preview de solo lectura (mientras se arma la siembra). */
+    soloLectura?: boolean
 }) {
     if (rondas.length === 0) return null
 
@@ -1628,6 +2011,10 @@ function BracketLayout({
     const hayFinalSeparada = ultimaRonda.length === 1 && rondas.length > 1
     const finalPartido = hayFinalSeparada ? ultimaRonda[0] : null
     const rondasSinFinal = hayFinalSeparada ? rondas.slice(0, -1) : rondas
+
+    // Todos los partidos del bracket: para detectar cupos vacíos que aún
+    // esperan al ganador de otro partido (no son pases directos).
+    const partidosTodos = useMemo(() => rondas.flatMap(([, js]) => js), [rondas])
 
     // Cupo = 2 * (partidos en R1) = total de participantes en el bracket.
     const cupo = primeraRonda.length * 2
@@ -1681,12 +2068,12 @@ function BracketLayout({
             <div className="flex justify-center">
                 <FinalColumn
                     final={ultimaRonda[0] ?? null}
+                    partidosTodos={partidosTodos}
                     arrastre={arrastre}
                     setArrastre={setArrastre}
                     ganadoresBorrador={ganadoresBorrador}
                     setGanadoresBorrador={setGanadoresBorrador}
-                    permiteAlineacion={permiteAlineacion}
-                    onConfigurarAlineacion={onConfigurarAlineacion}
+                    soloLectura={soloLectura}
                 />
             </div>
         )
@@ -1697,31 +2084,31 @@ function BracketLayout({
             <HalfBracket
                 lado="upper"
                 rondas={upperRondas}
+                partidosTodos={partidosTodos}
                 arrastre={arrastre}
                 setArrastre={setArrastre}
                 ganadoresBorrador={ganadoresBorrador}
                 setGanadoresBorrador={setGanadoresBorrador}
-                permiteAlineacion={permiteAlineacion}
-                onConfigurarAlineacion={onConfigurarAlineacion}
+                soloLectura={soloLectura}
             />
             <FinalColumn
                 final={finalPartido}
+                partidosTodos={partidosTodos}
                 arrastre={arrastre}
                 setArrastre={setArrastre}
                 ganadoresBorrador={ganadoresBorrador}
                 setGanadoresBorrador={setGanadoresBorrador}
-                permiteAlineacion={permiteAlineacion}
-                onConfigurarAlineacion={onConfigurarAlineacion}
+                soloLectura={soloLectura}
             />
             <HalfBracket
                 lado="lower"
                 rondas={lowerRondas}
+                partidosTodos={partidosTodos}
                 arrastre={arrastre}
                 setArrastre={setArrastre}
                 ganadoresBorrador={ganadoresBorrador}
                 setGanadoresBorrador={setGanadoresBorrador}
-                permiteAlineacion={permiteAlineacion}
-                onConfigurarAlineacion={onConfigurarAlineacion}
+                soloLectura={soloLectura}
             />
         </div>
     )
@@ -1733,21 +2120,22 @@ function BracketLayout({
 function HalfBracket({
     lado,
     rondas,
+    partidosTodos,
     arrastre,
     setArrastre,
     ganadoresBorrador,
     setGanadoresBorrador,
-    permiteAlineacion,
-    onConfigurarAlineacion,
+    soloLectura = false,
 }: {
     lado: 'upper' | 'lower'
     rondas: [string, Partido[]][]
+    /** Lista completa de partidos del bracket (para detectar esperas de rival). */
+    partidosTodos: Partido[]
     arrastre: { partidoId: number; participanteId: number } | null
     setArrastre: (a: { partidoId: number; participanteId: number } | null) => void
     ganadoresBorrador: Record<number, number>
     setGanadoresBorrador: React.Dispatch<React.SetStateAction<Record<number, number>>>
-    permiteAlineacion: boolean
-    onConfigurarAlineacion: (partidoId: number) => void
+    soloLectura?: boolean
 }) {
     if (rondas.length === 0) return null
     return (
@@ -1764,6 +2152,8 @@ function HalfBracket({
                                 <LlaveCard
                                     key={p.id}
                                     partido={p}
+                                    esperaLocal={esperaRivalEn(partidosTodos, p, 'LOCAL')}
+                                    esperaVisita={esperaRivalEn(partidosTodos, p, 'VISITANTE')}
                                     arrastre={arrastre}
                                     setArrastre={setArrastre}
                                     ganadorBorrador={ganadoresBorrador[p.id]}
@@ -1773,8 +2163,7 @@ function HalfBracket({
                                         }
                                         setArrastre(null)
                                     }}
-                                    permiteAlineacion={permiteAlineacion}
-                                    onConfigurarAlineacion={onConfigurarAlineacion}
+                                    soloLectura={soloLectura}
                                 />
                             ))}
                         </div>
@@ -1791,20 +2180,20 @@ function HalfBracket({
 // lower).
 function FinalColumn({
     final,
+    partidosTodos,
     arrastre,
     setArrastre,
     ganadoresBorrador,
     setGanadoresBorrador,
-    permiteAlineacion,
-    onConfigurarAlineacion,
+    soloLectura = false,
 }: {
     final: Partido | null
+    partidosTodos: Partido[]
     arrastre: { partidoId: number; participanteId: number } | null
     setArrastre: (a: { partidoId: number; participanteId: number } | null) => void
     ganadoresBorrador: Record<number, number>
     setGanadoresBorrador: React.Dispatch<React.SetStateAction<Record<number, number>>>
-    permiteAlineacion: boolean
-    onConfigurarAlineacion: (partidoId: number) => void
+    soloLectura?: boolean
 }) {
     return (
         <div className="flex flex-col items-center justify-center min-w-[220px] px-3">
@@ -1820,14 +2209,15 @@ function FinalColumn({
                         setArrastre={setArrastre}
                         ganadorBorrador={ganadoresBorrador[final.id]}
                         destacado
+                        esperaLocal={esperaRivalEn(partidosTodos, final, 'LOCAL')}
+                        esperaVisita={esperaRivalEn(partidosTodos, final, 'VISITANTE')}
                         onDropGanador={() => {
                             if (arrastre?.partidoId === final.id) {
                                 setGanadoresBorrador(prev => ({ ...prev, [final.id]: arrastre.participanteId }))
                             }
                             setArrastre(null)
                         }}
-                        permiteAlineacion={permiteAlineacion}
-                        onConfigurarAlineacion={onConfigurarAlineacion}
+                        soloLectura={soloLectura}
                     />
                 </div>
             )}
@@ -1842,8 +2232,9 @@ function LlaveCard({
     ganadorBorrador,
     onDropGanador,
     destacado = false,
-    permiteAlineacion = false,
-    onConfigurarAlineacion,
+    soloLectura = false,
+    esperaLocal = false,
+    esperaVisita = false,
 }: {
     partido: Partido
     arrastre: { partidoId: number; participanteId: number } | null
@@ -1851,9 +2242,12 @@ function LlaveCard({
     ganadorBorrador?: number
     onDropGanador: () => void
     destacado?: boolean
-    /** DOBLES/EQUIPOS: el partido tiene sub-detalles y se puede configurar alineación. */
-    permiteAlineacion?: boolean
-    onConfigurarAlineacion?: (partidoId: number) => void
+    /** Preview de solo lectura: sin arrastre ni zona de soltar. */
+    soloLectura?: boolean
+    /** El cupo vacío de ese lado espera al ganador de otro partido: no se
+     *  puede confirmar nada aquí todavía. */
+    esperaLocal?: boolean
+    esperaVisita?: boolean
 }) {
     // Partido fantasma: ambos lados null. Se finalizó sin ganador durante
     // la propagación de BYE (p.ej. 5 clasificados → cupo 8 deja huecos).
@@ -1873,10 +2267,16 @@ function LlaveCard({
         )
     }
 
+    const hayLocal = partido.participante_local_id != null
+    const hayVisita = partido.participante_visitante_id != null
+    // Mientras un hueco espera rival no se puede confirmar ganador: el
+    // partido de la ronda previa aún está vivo.
+    const bloqueadoPorEspera = esperaLocal || esperaVisita
+
     return (
         <div
-            onDragOver={e => e.preventDefault()}
-            onDrop={onDropGanador}
+            onDragOver={e => { if (!soloLectura && !bloqueadoPorEspera) e.preventDefault() }}
+            onDrop={() => { if (!soloLectura && !bloqueadoPorEspera) onDropGanador() }}
             className={`relative rounded-md border bg-surface shadow-sm transition-all min-h-16 ${
                 destacado ? 'border-warning shadow-warning/20' :
                 finalizado ? 'border-success' :
@@ -1892,20 +2292,26 @@ function LlaveCard({
                 {[partido.participante_local, partido.participante_visitante].map((p, i) => {
                     const pid = i === 0 ? partido.participante_local_id : partido.participante_visitante_id
                     const esGanador = ganadorId === pid && pid != null
+                    const espera = i === 0 ? esperaLocal : esperaVisita
+                    // Cupo vacío: si aún puede llegar alguien es "Por definir";
+                    // si su fuente ya cerró (o no existe) es pase directo.
+                    const etiquetaVacio = espera ? 'Por definir' : 'BYE'
                     return (
                         <div
                             key={i}
-                            draggable={!finalizado && !!pid}
-                            onDragStart={() => pid && setArrastre({ partidoId: partido.id, participanteId: pid })}
-                            className={`flex items-center gap-1.5 text-xs leading-tight cursor-grab truncate py-0.5 ${
-                                esGanador ? 'font-bold text-success' : 'text-fg'
-                            }`}
+                            draggable={!finalizado && !!pid && !soloLectura && !bloqueadoPorEspera}
+                            onDragStart={() => { if (!soloLectura && !bloqueadoPorEspera && pid) setArrastre({ partidoId: partido.id, participanteId: pid }) }}
+                            className={`flex items-center gap-1.5 text-xs leading-tight truncate py-0.5 ${
+                                !soloLectura ? 'cursor-grab' : ''
+                            } ${esGanador ? 'font-bold text-success' : 'text-fg'}`}
                             title={nombre(p)}
                         >
                             {esGanador && (
                                 <CheckBadgeIcon className="h-3.5 w-3.5 text-success shrink-0" />
                             )}
-                            <span className="truncate">{nombre(p)}</span>
+                            {pid == null
+                                ? <span className="italic text-fg-muted font-semibold tracking-wide">{etiquetaVacio}</span>
+                                : <span className="truncate">{nombre(p)}</span>}
                         </div>
                     )
                 })}
@@ -1913,7 +2319,12 @@ function LlaveCard({
             <div className="absolute top-0.5 right-1.5 text-[9px] text-fg-muted font-mono">
                 #{partido.posicion_llave}
             </div>
-            {!finalizado && (
+            {!finalizado && !soloLectura && bloqueadoPorEspera && (
+                <div className="mx-2 mb-2 p-1 text-center text-[10px] italic text-fg-muted">
+                    Esperando rival…
+                </div>
+            )}
+            {!finalizado && !soloLectura && !bloqueadoPorEspera && (
                 <div className={`mx-2 mb-2 p-1 text-center text-[10px] font-bold rounded border border-dashed ${
                     ganadorBorrador
                         ? 'text-warning border-warning bg-warning-soft/40'
@@ -1921,16 +2332,6 @@ function LlaveCard({
                 }`}>
                     {ganadorBorrador ? 'Borrador' : 'Suelta ganador aquí'}
                 </div>
-            )}
-            {!finalizado && permiteAlineacion && onConfigurarAlineacion && (
-                <button
-                    type="button"
-                    onClick={e => { e.stopPropagation(); onConfigurarAlineacion(partido.id) }}
-                    title="Configurar alineación (ABC / XYZ)"
-                    className="absolute bottom-1 right-1 inline-flex items-center justify-center h-5 w-5 rounded text-fg-muted hover:text-brand hover:bg-subtle transition-colors"
-                >
-                    <UsersIcon className="h-3.5 w-3.5" />
-                </button>
             )}
             {campeon && (
                 <div className="px-2 py-1.5 bg-warning-soft text-warning text-center text-[11px] font-bold inline-flex items-center justify-center gap-1 w-full rounded-b-md">

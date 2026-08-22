@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma'
 import { guardarJugadoresDetalle } from '@/lib/torneo/partidos'
 import { NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/auth'
 
 /**
  * PUT /api/torneos/[id]/partidos/[partidoId]/alineacion
@@ -33,6 +34,9 @@ import { NextResponse } from 'next/server'
  *     (los resultados no se pueden reescribir).
  */
 export async function PUT(request: Request, { params }: RouteParams) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const { id, partidoId } = await params
         const torneoId = Number(id)
@@ -62,7 +66,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
             }
         })
         if (!partido) return NextResponse.json({ error: 'Partido no encontrado' }, { status: 404 })
-        if (partido.torneos.modalidad !== 'EQUIPOS' && partido.torneos.modalidad !== 'DOBLES') {
+        if (partido.torneos.modalidad !== 'EQUIPOS' && partido.torneos.modalidad !== 'DOBLES' && partido.torneos.modalidad !== 'ATTA_TEAMS') {
             return NextResponse.json({ error: 'La alineación solo aplica a torneos por equipos o dobles' }, { status: 400 })
         }
         if (!partido.participante_local || !partido.participante_visitante) {
@@ -93,9 +97,29 @@ export async function PUT(request: Request, { params }: RouteParams) {
                 }, { status: 400 })
             }
             if (locales.some(id => !localesValidos.has(id))) {
+                // DEBUG temporal: rastrear qué payload dispara el rechazo.
+                console.error('[alineacion] RECHAZO LOCAL', JSON.stringify({
+                    torneo: torneoId,
+                    partido: programadoId,
+                    detalle: item.detalle_id,
+                    locales,
+                    visitantes,
+                    localesValidos: [...localesValidos],
+                    visitantesValidos: [...visitantesValidos],
+                }))
                 return NextResponse.json({ error: `Detalle ${item.detalle_id}: los jugadores locales deben pertenecer al equipo local` }, { status: 400 })
             }
             if (visitantes.some(id => !visitantesValidos.has(id))) {
+                // DEBUG temporal: rastrear qué payload dispara el rechazo.
+                console.error('[alineacion] RECHAZO VISITA', JSON.stringify({
+                    torneo: torneoId,
+                    partido: programadoId,
+                    detalle: item.detalle_id,
+                    locales,
+                    visitantes,
+                    localesValidos: [...localesValidos],
+                    visitantesValidos: [...visitantesValidos],
+                }))
                 return NextResponse.json({ error: `Detalle ${item.detalle_id}: los jugadores visitantes deben pertenecer al equipo visitante` }, { status: 400 })
             }
         }

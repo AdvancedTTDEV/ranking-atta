@@ -1,6 +1,8 @@
 import prisma from '@/lib/prisma'
 import { NextResponse } from 'next/server'
 import { PosicionManual, calcularClasificacionGrupo } from '@/lib/empates'
+import { requireAuth } from '@/lib/auth'
+import { resolverByesLlave } from '@/lib/llaves-byes'
 
 interface RouteParams { params: Promise<{ id: string }> }
 
@@ -37,13 +39,21 @@ interface RouteParams { params: Promise<{ id: string }> }
  * partido está `FINALIZADO`; si lo está, devuelve 409.
  */
 export async function PUT(request: Request, { params }: RouteParams) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const { id } = await params
         const torneoId = Number(id)
-        const { categoriaId, partidos } = await request.json() as {
+        const { categoriaId, partidos, nivel } = await request.json() as {
             categoriaId: number
             partidos: { id: number; participante_local_id: number | null; participante_visitante_id: number | null }[]
+            nivel?: number | null
         }
+        // ATTA Teams: scopea todas las operaciones a la llave del nivel
+        // (1=Primera categoría, 2=Segunda, 3=Tercera) para no mezclar las tres llaves.
+        const nivelLlave = nivel ? Number(nivel) : null
+        const filtroNivel = nivelLlave ? { nivel_llave: nivelLlave } : {}
         if (!torneoId || !categoriaId) {
             return NextResponse.json({ error: 'Falta torneo o categoría' }, { status: 400 })
         }
@@ -62,6 +72,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
                 torneo_id: torneoId,
                 categoria_id: Number(categoriaId),
                 fase: 'ELIMINACION',
+                ...filtroNivel,
                 estado: 'FINALIZADO'
             }
         })
@@ -78,7 +89,8 @@ export async function PUT(request: Request, { params }: RouteParams) {
             where: {
                 torneo_id: torneoId,
                 categoria_id: Number(categoriaId),
-                fase: 'ELIMINACION'
+                fase: 'ELIMINACION',
+                ...filtroNivel
             },
             select: { id: true, ronda_eliminacion: true, posicion_llave: true }
         })
@@ -199,6 +211,15 @@ export async function PUT(request: Request, { params }: RouteParams) {
             )
         )
 
+        // 5. Guardar la siembra confirma que los huecos restantes son
+        // pases directos intencionales: se resuelven aquí mismo (walkover
+        // + avance en cascada) para que el bracket quede jugable.
+        await resolverByesLlave({
+            torneoId,
+            categoriaId: Number(categoriaId),
+            nivelLlave,
+        })
+
         return NextResponse.json({ success: true })
     } catch (error: any) {
         console.error('Error al reordenar llaves:', error)
@@ -210,18 +231,26 @@ export async function PUT(request: Request, { params }: RouteParams) {
 }
 
 export async function DELETE(request: Request, { params }: RouteParams) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const { id } = await params
         const torneoId = Number(id)
-        const categoriaId = Number(new URL(request.url).searchParams.get('categoriaId'))
+        const url = new URL(request.url)
+        const categoriaId = Number(url.searchParams.get('categoriaId'))
+        const nivelParam = url.searchParams.get('nivel')
+        const nivelLlave = nivelParam ? Number(nivelParam) : null
         if (!torneoId || !categoriaId) {
             return NextResponse.json({ error: 'Falta torneo o categoría' }, { status: 400 })
         }
+        const filtroNivel = nivelLlave ? { nivel_llave: nivelLlave } : {}
         const finalizados = await prisma.torneo_partidos_programados.count({
             where: {
                 torneo_id: torneoId,
                 categoria_id: categoriaId,
                 fase: 'ELIMINACION',
+                ...filtroNivel,
                 estado: 'FINALIZADO'
             }
         })
@@ -234,7 +263,8 @@ export async function DELETE(request: Request, { params }: RouteParams) {
             where: {
                 torneo_id: torneoId,
                 categoria_id: categoriaId,
-                fase: 'ELIMINACION'
+                fase: 'ELIMINACION',
+                ...filtroNivel
             }
         })
         return NextResponse.json({ success: true })

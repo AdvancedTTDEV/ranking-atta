@@ -14,6 +14,9 @@ interface ModalProps {
     size?: ModalSize
     /** Optional content rendered in the footer (typically action buttons). */
     footer?: ReactNode
+    /** Bloque extra a ancho completo DEBAJO de las acciones (p. ej. la barra
+     *  de navegación entre modales del torneo). */
+    navegacionInferior?: ReactNode
 }
 
 const sizeClasses: Record<ModalSize, string> = {
@@ -22,7 +25,7 @@ const sizeClasses: Record<ModalSize, string> = {
     lg: 'max-w-lg',
     xl: 'max-w-2xl',
     '2xl': 'max-w-4xl',
-    full: 'max-w-[96vw]',
+    full: 'max-w-none sm:max-w-[96vw]',
 }
 
 export default function Modal({
@@ -33,6 +36,7 @@ export default function Modal({
     children,
     size = 'lg',
     footer,
+    navegacionInferior,
 }: ModalProps) {
     useEffect(() => {
         if (!isOpen) return
@@ -61,9 +65,13 @@ export default function Modal({
             aria-labelledby="modal-title"
         >
             <div
-                className={`card-elevated w-full ${sizeClasses[size]} max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col animate-scale-in`}
+                className={`card-elevated w-full ${sizeClasses[size]} max-h-[94dvh] sm:max-h-[90vh] overflow-hidden flex flex-col rounded-b-none sm:rounded-xl animate-scale-in`}
                 onClick={(e) => e.stopPropagation()}
             >
+                {/* Asa de arrastre visual (solo móvil, estilo bottom-sheet). */}
+                <div className="flex-shrink-0 flex justify-center pt-2 sm:hidden">
+                    <span className="h-1 w-10 rounded-full bg-fg-muted/30" aria-hidden="true" />
+                </div>
                 <div className="card-header-row flex-shrink-0">
                     <div className="min-w-0">
                         <h3 id="modal-title" className="card-title text-lg">
@@ -80,12 +88,17 @@ export default function Modal({
                         <XMarkIcon className="h-5 w-5" />
                     </button>
                 </div>
-                <div className="card-body overflow-y-auto scrollbar-thin flex-1">
+                <div className="card-body overflow-y-auto scrollbar-thin flex-1 overscroll-contain">
                     {children}
                 </div>
                 {footer && (
-                    <div className="flex-shrink-0 border-t border-line px-5 py-3 flex justify-end gap-2 bg-surface-2">
+                    <div className="flex-shrink-0 border-t border-line px-4 sm:px-5 py-3 flex justify-end gap-2 bg-surface-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
                         {footer}
+                    </div>
+                )}
+                {navegacionInferior && (
+                    <div className="flex-shrink-0 border-t border-line px-5 py-2.5 bg-surface">
+                        {navegacionInferior}
                     </div>
                 )}
             </div>

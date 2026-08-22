@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'react-hot-toast'
-import { PrinterIcon, PlayIcon, CheckBadgeIcon, TrophyIcon, ExclamationTriangleIcon, ChevronUpDownIcon, CheckIcon, UsersIcon } from '@heroicons/react/24/outline'
+import { PrinterIcon, PlayIcon, CheckBadgeIcon, TrophyIcon, ExclamationTriangleIcon, ChevronUpDownIcon, CheckIcon } from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
+import NavegacionModales, { DestinoModal } from '@/components/ui/NavegacionModales'
+import CargandoPantalla from '@/components/ui/CargandoPantalla'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -12,6 +14,7 @@ import PartidosGrupoModal, { GrupoLite } from '@/components/ui/PartidosGrupoModa
 import ResolverEmpateModal from '@/components/ui/ResolverEmpateModal'
 import EncuentroEquiposWizardModal from '@/components/ui/EncuentroEquiposWizardModal'
 import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
+import { fetchCache, obtenerCache, precargar } from '@/lib/fetchCache'
 import { imprimirAlineacionesBatch as importarEImprimirAlineacionBatch } from '@/lib/torneo/imprimirAlineacion'
 import { MATCHUPS_EQUIPOS, MATCHUPS_DOBLES } from '@/lib/torneo/matchups'
 
@@ -73,11 +76,11 @@ interface Partido {
 interface Torneo {
     id: number
     nombre: string
-    modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS'
+    modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS' | 'ATTA_TEAMS'
     abierto?: boolean
     torneo_categorias: { categorias: Categoria }[]
 }
-interface Props { isOpen: boolean; onClose: () => void; torneo: Torneo | null; onOpenLlaves?: () => void }
+interface Props { isOpen: boolean; onClose: () => void; torneo: Torneo | null; onOpenLlaves?: () => void; onNavegar?: (destino: DestinoModal) => void }
 
 const nombreParticipante = (participante: Participante) =>
     participante.nombre_personalizado?.trim()
@@ -102,8 +105,7 @@ function TablasClasificacion({
     grupoFiltroId,
     borradoresPorGrupo,
     onResolverEmpate,
-    onConfigurarAlineacion,
-    permiteAlineacion,
+    clasifican = 2,
 }: {
     clasificaciones: ClasificacionGrupo[]
     onClickGrupo?: (grupoId: number) => void
@@ -112,10 +114,8 @@ function TablasClasificacion({
     borradoresPorGrupo?: Map<number, Set<number>>
     /** Abre el modal de resolución de empate para el grupo dado. */
     onResolverEmpate?: (grupoId: number) => void
-    /** Abre el wizard de alineación para el grupo dado. Solo DOBLES/EQUIPOS. */
-    onConfigurarAlineacion?: (grupoId: number) => void
-    /** Si false, el botón "Alineación" no se muestra (INDIVIDUAL). */
-    permiteAlineacion?: boolean
+    /** Posiciones que clasifican a llaves; se resaltan en la tabla. ATTA Teams usa 3. */
+    clasifican?: number
 }) {
     if (clasificaciones.length === 0) return null
     return (
@@ -150,15 +150,6 @@ function TablasClasificacion({
                                 )}
                             </span>
                             <div className="flex items-center gap-2">
-                                {permiteAlineacion && onConfigurarAlineacion && (
-                                    <button
-                                        type="button"
-                                        onClick={() => onConfigurarAlineacion(grupo.grupoId)}
-                                        className="text-[0.65rem] font-normal normal-case text-brand hover:underline inline-flex items-center gap-1"
-                                    >
-                                        <UsersIcon className="h-3 w-3" /> Configurar alineación
-                                    </button>
-                                )}
                                 {onClickGrupo && (
                                     <button
                                         type="button"
@@ -198,10 +189,11 @@ function TablasClasificacion({
                                 </thead>
                                 <tbody>
                                     {grupo.posiciones.map(posicion => {
+                                        const clasifica = posicion.posicion <= clasifican
                                         const filaClass = [
                                             'transition-colors',
                                             onClickGrupo ? 'cursor-pointer hover:bg-subtle' : '',
-                                            posicion.requiere_decision_manual ? 'bg-warning-soft/40 border-l-2 border-warning' : '',
+                                            posicion.requiere_decision_manual ? 'bg-warning-soft/40 border-l-2 border-warning' : clasifica ? 'border-l-2 border-success' : '',
                                         ].filter(Boolean).join(' ')
                                         const tooltip = posicion.requiere_decision_manual
                                             ? 'Empate de W, sets y puntos: el sistema no puede desempatar. Asigna la posición manualmente antes de continuar.'
@@ -247,7 +239,7 @@ function TablasClasificacion({
     )
 }
 
-export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLlaves }: Props) {
+export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLlaves, onNavegar }: Props) {
     const [categoriaId, setCategoriaId] = useState('')
     const [partidos, setPartidos] = useState<Partido[]>([])
     const [clasificaciones, setClasificaciones] = useState<ClasificacionGrupo[]>([])
@@ -266,7 +258,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
     } | null>(null)
     const [todasCategorias, setTodasCategorias] = useState<Categoria[]>([])
     /** ID del grupo cuyo wizard de alineación está abierto, o null. */
-    const [wizardGrupoId, setWizardGrupoId] = useState<number | null>(null)
+    const [wizardPartidoId, setWizardPartidoId] = useState<number | null>(null)
 
     // Cargamos el catálogo completo de categorías para soportar torneos
     // "abiertos" (DOBLES, EQUIPOS o primera categoría), donde el selector
@@ -322,41 +314,6 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         return mapa
     }, [partidos, borradores])
 
-    /** Datos del grupo actualmente en el wizard de alineación. El wizard
-     *  recibe el grupo completo: sus 2 equipos + todos sus partidos. Así
-     *  configuramos la alineación ABC/XYZ UNA vez por grupo y se replica
-     *  a todos los partidos. */
-    const grupoWizard = useMemo(() => {
-        if (wizardGrupoId === null) return null
-        const grupo = partidosPorGrupo.find(g => g.id === wizardGrupoId)
-        if (!grupo || grupo.partidos.length === 0) return null
-        // En un round-robin todos los partidos enfrentan a exactamente los
-        // 2 mismos participantes. Tomamos el primero como referencia.
-        const primerPartido = grupo.partidos[0]
-        return {
-            grupoId: grupo.id,
-            numeroGrupo: grupo.numero,
-            equipos: {
-                local: primerPartido.participante_local,
-                visitante: primerPartido.participante_visitante,
-            },
-            partidos: grupo.partidos.map(p => ({
-                id: p.id,
-                orden: p.orden,
-                detalles: p.detalles.map(d => ({
-                    id: d.id,
-                    orden: d.orden,
-                    tipo: d.tipo,
-                    jugadores: d.jugadores.map(j => ({
-                        jugador_id: j.jugador_id,
-                        lado: j.lado,
-                        jugadores: j.jugadores,
-                    })),
-                })),
-            })),
-        }
-    }, [wizardGrupoId, partidosPorGrupo])
-
     useEffect(() => {
         // Al cambiar de torneo, seleccionamos la primera categoría SOLO si
         // la actual ya no es válida. No limpiamos partidos ni borradores:
@@ -377,15 +334,18 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         }
     }, [torneo, esAbierto, todasCategorias])
 
-    const cargar = async () => {
+    const urlPartidos = (catId: string) => `/api/torneos/${torneo?.id}/partidos?categoriaId=${catId}`
+
+    const cargar = async (forzar = false) => {
         if (!torneo || !categoriaId) return
-        setLoading(true)
+        const url = urlPartidos(categoriaId)
+        // Con copia en caché pintamos al instante (y revalida por detrás):
+        // cero spinner al cambiar de categoría ya visitada.
+        if (!forzar && !obtenerCache(url)) setLoading(true)
         try {
-            const response = await fetch(`/api/torneos/${torneo.id}/partidos?categoriaId=${categoriaId}`)
-            const data = await response.json()
-            if (!response.ok) throw new Error(data.error || 'No se pudieron cargar los partidos')
-            setPartidos(data.partidos || [])
-            setClasificaciones(data.clasificaciones || [])
+            const data = await fetchCache<{ partidos?: never[]; clasificaciones?: never[] }>(url, { forzar })
+            setPartidos((data.partidos || []) as never[])
+            setClasificaciones((data.clasificaciones || []) as never[])
         } catch (error) {
             toast.error(error instanceof Error ? error.message : 'Error de conexión')
         } finally {
@@ -394,6 +354,17 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
     }
 
     useEffect(() => { if (isOpen && categoriaId) cargar() }, [isOpen, categoriaId])
+
+    // Precarga silenciosa de TODAS las categorías del torneo al abrir:
+    // alternar entre ellas pinta al instante desde la caché.
+    useEffect(() => {
+        if (!isOpen || !torneo || categorias.length === 0) return
+        const ids = esAbierto
+            ? [categorias.find(c => c.nombre === 'primera')?.id ?? categorias[0]?.id]
+            : categorias.map(c => c.id)
+        precargar(...ids.filter(Boolean).map(id => urlPartidos(String(id))))
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen, torneo, categorias])
 
     // ── Previsualización de generación ────────────────────────────────────
     const abrirPrevisualizacionGeneracion = async () => {
@@ -475,7 +446,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
             if (!response.ok) throw new Error(data.error || 'No se pudieron generar los partidos')
             toast.success(`${data.message} (${seleccionados.length} cruces)`)
             setModalGeneracion(null)
-            cargar()
+            cargar(true)
         } catch (error) {
             toast.error(error instanceof Error ? error.message : 'Error de conexión')
         } finally {
@@ -517,12 +488,12 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         const fallidos: { id: number; motivo: string }[] = []
         // Trabajamos sobre una copia para no mutar el estado durante el loop.
         const borradoresActuales = Object.entries(borradores)
-        for (const [partidoIdStr, resultado] of borradoresActuales) {
+        const guardarUno = async ([partidoIdStr, resultado]: [string, { sets: { local: number; visitante: number }[] }]) => {
             const partidoId = Number(partidoIdStr)
             const errorValidacion = validarSets(resultado.sets)
             if (errorValidacion) {
                 fallidos.push({ id: partidoId, motivo: errorValidacion })
-                continue
+                return
             }
             try {
                 const response = await fetch(`/api/torneos/${torneo.id}/partidos/${partidoId}`, {
@@ -539,14 +510,21 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                     if (response.status === 409) {
                         guardados.push(partidoId)
                     } else {
-                        fallidos.push({ id: partidoId, motivo: data.error || `HTTP ${response.status}` })
+                        fallidos.push({ id: partidoId, motivo: data.error || data.detalles || `HTTP ${response.status}` })
                     }
-                    continue
+                    return
                 }
                 guardados.push(partidoId)
             } catch (error) {
                 fallidos.push({ id: partidoId, motivo: error instanceof Error ? error.message : 'Error de red' })
             }
+        }
+
+        // En paralelo por lotes pequeños: secuencial sobre un túnel lento
+        // convierte cada guardado en ~10s y el total en minutos.
+        const LOTE = 4
+        for (let i = 0; i < borradoresActuales.length; i += LOTE) {
+            await Promise.all(borradoresActuales.slice(i, i + LOTE).map(guardarUno))
         }
         // Limpiamos de `borradores` los que sí quedaron persistidos (éxito o
         // 409), conservando los que fallaron para que el usuario los revise.
@@ -560,11 +538,13 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         // Refrescamos SIEMPRE para sincronizar con la BD: partidos
         // finalizados, clasificaciones recalculadas, borradores fantasma
         // eliminados de la UI.
-        await cargar()
+        await cargar(true)
         if (fallidos.length === 0) {
             toast.success(`${guardados.length} resultado${guardados.length === 1 ? '' : 's'} guardados y ranking actualizado`)
         } else if (guardados.length === 0) {
-            toast.error(`No se guardó ningún resultado. Revisa los ${fallidos.length} borrador${fallidos.length === 1 ? '' : 'es'}`)
+            // Mostramos el primer motivo: sin esto, un lote que falla entero
+            // (ej. torneo borrado → 404) no dice POR QUÉ.
+            toast.error(`No se guardó ningún resultado: ${fallidos[0]?.motivo ?? 'error desconocido'}. Revisa los ${fallidos.length} borrador${fallidos.length === 1 ? '' : 'es'}`)
         } else {
             const motivo = fallidos[0].motivo
             toast.error(`${guardados.length} guardados, ${fallidos.length} con error: ${motivo}${fallidos.length > 1 ? '…' : ''}`)
@@ -591,7 +571,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         // cada cruce. Solo se imprimen los jugadores que efectivamente
         // juegan ese partido (no todos los del roster).
         // Ej: partido 1 = A+B vs X+Y → solo imprime A, B (locales) y X, Y (visitantes).
-        const modalidadEquipos = torneo.modalidad === 'DOBLES' || torneo.modalidad === 'EQUIPOS'
+        const modalidadEquipos = torneo.modalidad === 'DOBLES' || torneo.modalidad === 'EQUIPOS' || torneo.modalidad === 'ATTA_TEAMS'
         const matchups = modalidadEquipos
             ? (torneo.modalidad === 'DOBLES' ? MATCHUPS_DOBLES : MATCHUPS_EQUIPOS)
             : []
@@ -819,6 +799,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                 title="Partidos de grupos"
                 description={torneo.nombre}
                 size="full"
+                navegacionInferior={<NavegacionModales activo="partidos" onNavegar={onNavegar} />}
             >
                 <div className="-mx-5 -mt-5 mb-4 card-flush overflow-hidden">
                     <div className="flex flex-wrap items-end gap-3 p-3 bg-subtle">
@@ -855,7 +836,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                         >
                             Imprimir hojas
                         </Button>
-                        {(torneo?.modalidad === 'DOBLES' || torneo?.modalidad === 'EQUIPOS') && (
+                        {(torneo?.modalidad === 'DOBLES' || torneo?.modalidad === 'EQUIPOS' || torneo?.modalidad === 'ATTA_TEAMS') && (
                             <Button
                                 variant="secondary"
                                 onClick={() => {
@@ -914,6 +895,29 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                     </div>
                 </div>
 
+                {/* Guía paso a paso: el flujo completo de carga es manual y
+                    siempre visible para que nadie se pierda. Los pasos de
+                    alineación solo aplican a modalidades de equipos. */}
+                {partidos.length > 0 && (torneo.modalidad === 'DOBLES' || torneo.modalidad === 'EQUIPOS' || torneo.modalidad === 'ATTA_TEAMS') && (
+                    <div className="banner banner-info mb-4 text-xs leading-relaxed">
+                        <span>
+                            <b>Cómo cargar los resultados:</b>{' '}
+                            <b>1.</b> Toca un grupo en la tabla → <b>2.</b> Toca un partido y pulsa «Alineación» (quiénes son A, B, C vs X, Y, Z) →{' '}
+                            <b>3.</b> Anota los sets → <b>4.</b> «Guardar cambios» aquí arriba →{' '}
+                            <b>5.</b> Cuando todos los grupos estén listos, «Ver llaves».
+                        </span>
+                    </div>
+                )}
+                {partidos.length > 0 && torneo.modalidad !== 'DOBLES' && torneo.modalidad !== 'EQUIPOS' && torneo.modalidad !== 'ATTA_TEAMS' && (
+                    <div className="banner banner-info mb-4 text-xs leading-relaxed">
+                        <span>
+                            <b>Cómo cargar los resultados:</b>{' '}
+                            <b>1.</b> Toca un grupo en la tabla → <b>2.</b> Toca cada partido y anota los sets →{' '}
+                            <b>3.</b> «Guardar cambios» aquí arriba → <b>4.</b> Cuando todos los grupos estén listos, «Ver llaves».
+                        </span>
+                    </div>
+                )}
+
                 <div>
                     {!loading && (
                         <TablasClasificacion
@@ -922,13 +926,12 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                             grupoFiltroId={grupoModalId}
                             borradoresPorGrupo={borradoresPorGrupo}
                             onResolverEmpate={(grupoId) => setGrupoResolucionId(grupoId)}
-                            onConfigurarAlineacion={(grupoId) => setWizardGrupoId(grupoId)}
-                            permiteAlineacion={torneo?.modalidad === 'DOBLES' || torneo?.modalidad === 'EQUIPOS'}
+                            clasifican={torneo?.modalidad === 'ATTA_TEAMS' ? 3 : 2}
                         />
                     )}
 
                     {loading ? (
-                        <div className="text-center py-16 text-fg-muted">Cargando partidos...</div>
+                        <CargandoPantalla titulo="Cargando partidos" mensajes={['Consultando cruces…', 'Calculando clasificaciones…', 'Casi listo…']} />
                     ) : clasificaciones.length === 0 ? (
                         <div className="text-center py-20">
                             <TrophyIcon className="h-10 w-10 mx-auto text-fg-muted opacity-40" />
@@ -987,6 +990,11 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                             // para no perder el contexto al remontar.
                             setPartidoResultadoId(partidoId)
                         }}
+                        onConfigurarAlineacionPartido={
+                            torneo?.modalidad === 'DOBLES' || torneo?.modalidad === 'EQUIPOS' || torneo?.modalidad === 'ATTA_TEAMS'
+                                ? (partidoId) => setWizardPartidoId(partidoId)
+                                : undefined
+                        }
                     />
                 )
             })()}
@@ -1003,7 +1011,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                     borradores={borradores}
                     onBorradoresChange={setBorradores}
                     onPersist={() => {
-                        cargar()
+                        cargar(true)
                     }}
                 />
             )}
@@ -1023,7 +1031,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                         grupoNumero={grupo.numero_grupo}
                         pendientesIds={grupo.pendientes_manual ?? []}
                         posiciones={grupo.posiciones}
-                        onGuardado={() => cargar()}
+                        onGuardado={() => cargar(true)}
                     />
                 )
             })()}
@@ -1098,22 +1106,45 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                 alineación" en la cabecera de la clasificación del grupo.
                 Al cerrarlo se recarga la lista para reflejar las
                 alineaciones guardadas en todos los partidos del grupo. */}
-            {grupoWizard && torneo && (
-                <EncuentroEquiposWizardModal
-                    isOpen
-                    onClose={() => {
-                        setWizardGrupoId(null)
-                        cargar()
-                    }}
-                    torneo={{ id: torneo.id, nombre: torneo.nombre }}
-                    categoria={categorias.find(c => c.id.toString() === categoriaId)?.nombre || ''}
-                    grupoId={grupoWizard.grupoId}
-                    equipos={grupoWizard.equipos}
-                    partidos={grupoWizard.partidos}
-                    modalidad={torneo.modalidad === 'EQUIPOS' ? 'EQUIPOS' : 'DOBLES'}
-                    onGuardado={() => cargar()}
-                />
-            )}
+            {/* Wizard de alineación para UN partido del grupo. Cada
+                encuentro (pareja) tiene su propia serie ABC/XYZ, así que
+                se configura partido por partido desde la lista del grupo. */}
+            {wizardPartidoId !== null && torneo && (() => {
+                const partido = partidos.find(p => p.id === wizardPartidoId)
+                if (!partido || !partido.participante_local || !partido.participante_visitante) return null
+                return (
+                    <EncuentroEquiposWizardModal
+                        isOpen
+                        onClose={() => {
+                            setWizardPartidoId(null)
+                            cargar(true)
+                        }}
+                        torneo={{ id: torneo.id, nombre: torneo.nombre }}
+                        categoria={categorias.find(c => c.id.toString() === categoriaId)?.nombre || ''}
+                        grupoId={0}
+                        equipos={{
+                            local: partido.participante_local as any,
+                            visitante: partido.participante_visitante as any,
+                        }}
+                        partidos={[{
+                            id: partido.id,
+                            orden: partido.orden,
+                            detalles: partido.detalles.map(d => ({
+                                id: d.id,
+                                orden: d.orden,
+                                tipo: d.tipo,
+                                jugadores: d.jugadores.map(j => ({
+                                    jugador_id: j.jugador_id,
+                                    lado: j.lado,
+                                    jugadores: j.jugadores,
+                                })),
+                            })) as any,
+                        }]}
+                        modalidad={torneo.modalidad === 'DOBLES' ? 'DOBLES' : 'EQUIPOS'}
+                        onGuardado={() => cargar(true)}
+                    />
+                )
+            })()}
         </>
     )
 }

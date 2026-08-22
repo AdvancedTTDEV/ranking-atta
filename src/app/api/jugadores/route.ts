@@ -1,7 +1,11 @@
 import prisma from '@/lib/prisma'
 import { NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/auth'
 
 export async function GET(request: Request) {
+  const unauthorized = await requireAuth()
+  if (unauthorized) return unauthorized
+
   try {
     const { searchParams } = new URL(request.url)
     const all = searchParams.get('all') === 'true'
@@ -57,6 +61,9 @@ export async function GET(request: Request) {
 
 
 export async function POST(request: Request) {
+  const unauthorized = await requireAuth()
+  if (unauthorized) return unauthorized
+
   try {
     const data = await request.json()
     
@@ -91,20 +98,24 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
+  const unauthorized = await requireAuth()
+  if (unauthorized) return unauthorized
+
   try {
     const data = await request.json()
 
-    // Actualización múltiple
+    // Actualización múltiple: transacción única — o se aplican todos los
+    // cambios de categoría o ninguno (evita estados mixtos a mitad de lista).
     if (Array.isArray(data)) {
-      const updatePromises = data.map(jugador =>
+      const actualizados = await prisma.$transaction(
+        data.map(jugador =>
           prisma.jugadores.update({
             where: { id: jugador.id },
             data: { categoria_id: jugador.categoria_id }
           })
+        )
       )
-
-      const updatedJugadores = await Promise.all(updatePromises)
-      return NextResponse.json(updatedJugadores)
+      return NextResponse.json(actualizados)
     }
 
     // Actualización individual

@@ -2,6 +2,7 @@ import prisma from '@/lib/prisma'
 import { NextResponse } from 'next/server'
 import { crucesRoundRobin } from '@/lib/seed'
 import { OFFSET_MANUAL, calcularEstadisticas, compararRatio, calcularClasificacionGrupo, PosicionManual, PartidoParaTabla } from '@/lib/empates'
+import { requireAuth } from '@/lib/auth'
 
 interface RouteParams { params: Promise<{ id: string }> }
 
@@ -22,6 +23,9 @@ const participantesIncludeLite = {
 }
 
 export async function GET(request: Request, { params }: RouteParams) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const { id } = await params
         const torneoId = Number(id)
@@ -42,7 +46,11 @@ export async function GET(request: Request, { params }: RouteParams) {
             ? { torneo_id: torneoId, categoria_id: categoriaIdFiltro }
             : { torneo_id: torneoId, grupo_id: { not: null } }
 
-        const partidos = await prisma.torneo_partidos_programados.findMany({
+        // PERF: ambas consultas son independientes (las posiciones manuales
+        // se filtran por relación al torneo, sin depender de los IDs que
+        // devuelve la primera) → una sola tanda paralela.
+        const [partidos, grupoParticipantes] = await Promise.all([
+            prisma.torneo_partidos_programados.findMany({
             where: whereCategoria,
             orderBy: [{ categoria_id: 'asc' }, { grupo_id: 'asc' }, { orden: 'asc' }],
             include: lite
@@ -66,20 +74,16 @@ export async function GET(request: Request, { params }: RouteParams) {
                         }
                     }
                 }
-        })
+        }),
+        prisma.torneo_grupo_participantes.findMany({
+            where: { torneo_grupos: { torneo_id: torneoId } },
+            select: { grupo_id: true, torneo_participante_id: true, posicion: true }
+        }),
+    ])
         const grupos = new Map<number, { numero: number; ids: Set<number>; nombres: Map<number, string>; partidos: typeof partidos; categoria_id: number; posicionesManual: Map<number, number> }>()
         // Leemos las posiciones manuales que el operador haya asignado
         // previamente (PUT /torneos/[id]/grupos/[grupoId]/posiciones).
         // Se consultan todas en una sola query para no hacer N+1.
-        const grupoIds = [...new Set(
-            partidos.map(p => p.torneo_grupos?.id).filter((id): id is number => typeof id === 'number')
-        )]
-        const grupoParticipantes = grupoIds.length > 0
-            ? await prisma.torneo_grupo_participantes.findMany({
-                where: { grupo_id: { in: grupoIds } },
-                select: { grupo_id: true, torneo_participante_id: true, posicion: true }
-            })
-            : []
         const manualPorGrupo = new Map<number, Map<number, number>>()
         for (const item of grupoParticipantes) {
             if (item.posicion == null) continue
@@ -177,6 +181,9 @@ export async function GET(request: Request, { params }: RouteParams) {
 }
 
 export async function POST(request: Request, { params }: RouteParams) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const { id } = await params
         const torneoId = Number(id)
@@ -331,7 +338,7 @@ export async function POST(request: Request, { params }: RouteParams) {
                 }))
             })
 
-            if (torneo.modalidad === 'EQUIPOS') {
+            if (torneo.modalidad === 'EQUIPOS' || torneo.modalidad === 'ATTA_TEAMS') {
                 const creados = await tx.torneo_partidos_programados.findMany({
                     where: { torneo_id: torneoId, categoria_id: Number(categoriaId), grupo_id: { in: grupos.map(grupo => grupo.id) } },
                     select: { id: true }

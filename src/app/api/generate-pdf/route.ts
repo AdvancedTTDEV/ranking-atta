@@ -2,8 +2,12 @@ import { NextResponse } from 'next/server'
 import puppeteer from 'puppeteer-core'
 import chromium from '@sparticuz/chromium'
 import { existsSync } from 'fs'
+import { requireAuth } from '@/lib/auth'
 
 export async function POST(req: Request) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const { jugadores, categoriaNombre, mesAnio, bgBase64 } = await req.json()
         const isProduction = process.env.NODE_ENV === 'production'

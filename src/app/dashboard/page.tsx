@@ -8,7 +8,7 @@ import ClubesWrapper from '@/components/dashboard/ClubesWrapper'
 import JugadoresWrapper from '@/components/dashboard/JugadoresWrapper'
 import TorneosWrapper from '@/components/dashboard/TorneosWrapper'
 import PartidosWrapper from '@/components/dashboard/PartidosWrapper'
-import AscensosDescensosWrapper from '@/components/dashboard/AscensosDescensosWrapper'
+import AscensosDescensosCard from '@/components/dashboard/AscensosDescensosCard'
 import { useSession } from 'next-auth/react'
 
 export default function DashboardPage() {
@@ -27,11 +27,10 @@ export default function DashboardPage() {
                         <div className="space-y-6">
                             <EstadisticasWrapper />
 
-                            <AscensosDescensosWrapper />
-
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                                <div className="lg:col-span-1">
+                                <div className="lg:col-span-1 space-y-6 flex flex-col gap-6">
                                     <ClubesWrapper />
+                                    <AscensosDescensosCard />
                                 </div>
                                 <div className="lg:col-span-2">
                                     <JugadoresWrapper />

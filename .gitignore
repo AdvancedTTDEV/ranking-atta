@@ -45,3 +45,8 @@ next-env.d.ts
 .idea/
 verify.cjs
 resolve_migrations.mjs
+
+# dumps de produccion / datos locales
+/prod.sql
+/*.xlsx
+backups/

@@ -6,6 +6,7 @@ import PartidoForm from '@/components/forms/PartidoForm'
 import { safeFetch } from '@/lib/api'
 import { toast } from 'react-hot-toast'
 import { Section } from '@/components/ui/Section'
+import Buscador, { useDebounce } from '@/components/ui/Buscador'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -24,7 +25,7 @@ type Partido = {
 type Torneo = {
     id: number
     nombre: string
-    modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS'
+    modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS' | 'ATTA_TEAMS'
 }
 
 interface PartidoTorneo {
@@ -65,6 +66,8 @@ export default function PartidosSection() {
     const [error, setError] = useState<string | null>(null)
     const [torneos, setTorneos] = useState<Torneo[]>([])
     const [selectedTorneoId, setSelectedTorneoId] = useState<string>('')
+    const [busqueda, setBusqueda] = useState('')
+    const busquedaDebounce = useDebounce(busqueda)
     const [currentPage, setCurrentPage] = useState(1)
     const [itemsPerPage, setItemsPerPage] = useState(10)
     const [totalItems, setTotalItems] = useState(0)
@@ -102,7 +105,9 @@ export default function PartidosSection() {
             setIsLoading(true)
             setError(null)
             const data = await safeFetch(
-                `/api/partidos?page=${page}&limit=${limit}${selectedTorneoId ? `&torneo_id=${selectedTorneoId}` : ''}`
+                `/api/partidos?page=${page}&limit=${limit}${selectedTorneoId ? `&torneo_id=${selectedTorneoId}` : ''}${
+                    busquedaDebounce ? `&q=${encodeURIComponent(busquedaDebounce)}` : ''
+                }`
             )
             const parsed = data.partidos.map((partido: Partido) => ({
                 id: partido.id,
@@ -150,7 +155,8 @@ export default function PartidosSection() {
 
     useEffect(() => {
         fetchPartidos(currentPage, itemsPerPage)
-    }, [currentPage, itemsPerPage, selectedTorneoId])
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentPage, itemsPerPage, selectedTorneoId, busquedaDebounce])
 
     useEffect(() => {
         fetchPartidosTorneo()
@@ -192,6 +198,7 @@ export default function PartidosSection() {
     const columns = [
         {
             header: 'ID',
+            ocultarEnMovil: true,
             accessor: 'id',
             key: 'id',
             className: 'w-16 text-fg-muted',
@@ -208,6 +215,7 @@ export default function PartidosSection() {
         },
         {
             header: 'Ganador',
+            ocultarEnMovil: true,
             accessor: 'ganadorNombre',
             render: (n: string) => (
                 <Badge variant="success">{n}</Badge>
@@ -215,6 +223,7 @@ export default function PartidosSection() {
         },
         {
             header: 'Ronda',
+            ocultarEnMovil: true,
             accessor: 'ronda',
             render: (n: string) =>
                 n ? <Badge variant="neutral">{n}</Badge> : <span className="text-fg-muted">—</span>,
@@ -226,6 +235,7 @@ export default function PartidosSection() {
         },
         {
             header: 'Fecha',
+            ocultarEnMovil: true,
             accessor: 'fecha',
             className: 'hidden lg:table-cell whitespace-nowrap text-fg-muted',
         },
@@ -269,28 +279,16 @@ export default function PartidosSection() {
             title="Partidos"
             subtitle="Historial de partidos y resultados"
             actions={
-                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-                    <Select
-                        value={selectedTorneoId}
-                        onChange={handleTorneoChange}
-                        className="sm:w-48"
+                !showForm && (
+                    <Button
+                        variant="primary"
+                        size="sm"
+                        leadingIcon={<PlusIcon className="h-4 w-4" />}
+                        onClick={() => setShowForm(true)}
                     >
-                        <option value="">Todos los torneos</option>
-                        {torneos.map((t) => (
-                            <option key={t.id} value={t.id}>{t.nombre}</option>
-                        ))}
-                    </Select>
-                    {!showForm && (
-                        <Button
-                            variant="primary"
-                            size="sm"
-                            leadingIcon={<PlusIcon className="h-4 w-4" />}
-                            onClick={() => setShowForm(true)}
-                        >
-                            Nuevo
-                        </Button>
-                    )}
-                </div>
+                        Nuevo
+                    </Button>
+                )
             }
         >
             {error && <div className="banner banner-danger mb-4">{error}</div>}
@@ -393,6 +391,27 @@ export default function PartidosSection() {
                             )}
                         </h3>
                         <DataTable
+                            toolbar={
+                                <div className="flex flex-col sm:flex-row gap-2">
+                                    <Buscador
+                                        valor={busqueda}
+                                        onCambiar={setBusqueda}
+                                        placeholder="Buscar por jugador…"
+                                        className="sm:w-56"
+                                    />
+                                    <Select
+                                        value={selectedTorneoId}
+                                        onChange={handleTorneoChange}
+                                        className="sm:max-w-[14rem]"
+                                        aria-label="Filtrar por torneo"
+                                    >
+                                        <option value="">Todos los torneos</option>
+                                        {torneos.map((t) => (
+                                            <option key={t.id} value={t.id}>{t.nombre}</option>
+                                        ))}
+                                    </Select>
+                                </div>
+                            }
                             columns={columns}
                             data={partidos}
                             currentPage={currentPage}
