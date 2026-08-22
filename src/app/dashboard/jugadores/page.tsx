@@ -4,7 +4,6 @@ import Header from '@/components/ui/Header'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { DashboardGate } from '@/components/ui/DashboardGate'
 import JugadoresWrapper from '@/components/dashboard/JugadoresWrapper'
-import JugadorSearchAutocomplete from '@/components/dashboard/JugadorSearchAutoComplete'
 
 export default function JugadoresPage() {
     return (
@@ -18,7 +17,6 @@ export default function JugadoresPage() {
                             subtitle="Busca y administra los jugadores del club"
                         />
                         <div className="space-y-6">
-                            <JugadorSearchAutocomplete />
                             <JugadoresWrapper />
                         </div>
                     </DashboardGate>
