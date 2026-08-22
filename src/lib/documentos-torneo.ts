@@ -8,6 +8,7 @@
  *  - `abrirImpresion`: ventana nueva con @page y print() automático.
  *  - `descargarPngDeDoc`: render offscreen a ancho fijo + html-to-image.
  */
+import { descargarArchivo } from './descargar-archivo'
 
 export interface DocImpresion {
     titulo: string
@@ -410,10 +411,9 @@ export async function descargarPngDeDoc(doc: DocImpresion, anchoPx: number, nomb
         await incrustarImagenesComoDataUrl(objetivo)
         const { toPng } = await import('html-to-image')
         const dataUrl = await toPng(objetivo, { backgroundColor: fondo, pixelRatio: 2, skipFonts: true })
-        const enlace = document.createElement('a')
-        enlace.download = nombreArchivo
-        enlace.href = dataUrl
-        enlace.click()
+        // iOS Safari ignora `download` en data URLs — descargarArchivo
+        // hace window.open en iOS para que Safari muestre el botón "Guardar".
+        descargarArchivo(dataUrl, nombreArchivo)
     } finally {
         contenedor.remove()
     }
