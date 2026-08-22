@@ -9,7 +9,10 @@ import Modal from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { toast } from 'react-hot-toast'
-import { descargarPngDeDoc, type DocImpresion } from '@/lib/documentos-torneo'
+import {
+    descargarHojaPartidosPng,
+    type LetrasHoja, type JugadorHoja,
+} from '@/lib/torneo/hojaPartidos'
 import {
     LETRAS_LOCALES, LETRAS_VISITANTES,
     matchupsEstandar, resolverMatchup,
@@ -67,176 +70,6 @@ function nombreEquipo(p: Participante): string {
 
 function miembrosComoLista(p: Participante): Jugador[] {
     return p.miembros.map(m => m.jugadores)
-}
-
-// ── Hoja de partidos (descarga PNG) ──────────────────────────────────
-
-const escaparHtmlHoja = (texto: string) =>
-    texto.replace(/[&<>"']/g, c => (
-        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c] || c
-    ))
-
-const slugArchivo = (texto: string) =>
-    texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase()
-
-interface HojaPartidosArgs {
-    torneoNombre: string
-    categoria: string
-    modalidad: 'DOBLES' | 'EQUIPOS'
-    ladoAbc: 'local' | 'visitante'
-    equipos: { local: Participante; visitante: Participante }
-    asignacion: Asignacion
-    partidos: PartidoLite[]
-}
-
-/**
- * Construye la **Hoja de partidos** del encuentro ya alineado: mismo
- * formato carta vertical que la hoja impresa, pero en vez del cruce en
- * blanco trae los juegos a disputar resueltos — etiqueta del cruce
- * («A vs X», «B+C vs Y+Z»), nombre real de los integrantes por lado y
- * árbitro con su equipo — para entregarla al anotador de la serie.
- */
-function construirHojaPartidos({
-    torneoNombre, categoria, modalidad, ladoAbc, equipos, asignacion, partidos,
-}: HojaPartidosArgs): DocImpresion {
-    const matchups = matchupsEstandar(modalidad)
-    const poolAbc = (ladoAbc === 'visitante' ? equipos.visitante : equipos.local).miembros.map(m => m.jugadores)
-    const poolXyz = (ladoAbc === 'visitante' ? equipos.local : equipos.visitante).miembros.map(m => m.jugadores)
-    const nombreJugadorDe = (pool: Jugador[], id: number | undefined) =>
-        id ? pool.find(j => j.id === id)?.nombre ?? `#${id}` : '—'
-
-    const equipoAbc = ladoAbc === 'visitante' ? equipos.visitante : equipos.local
-    const equipoXyz = ladoAbc === 'visitante' ? equipos.local : equipos.visitante
-    const nombreEquipoAbc = nombreEquipo(equipoAbc)
-    const nombreEquipoXyz = nombreEquipo(equipoXyz)
-
-    const listaLado = (
-        letras: readonly string[],
-        pool: Jugador[],
-        buscarId: (letra: string) => number | undefined,
-    ) => `<ul class="jugadores">${letras.map(letra => `
-        <li>
-            <span class="letra">${escaparHtmlHoja(letra)}</span>
-            <span class="nom-jug">${escaparHtmlHoja(nombreJugadorDe(pool, buscarId(letra)))}</span>
-        </li>`).join('')}</ul>`
-
-    const filasJuegos = matchups.map((m, idxM) => {
-        const letrasLoc = Array.isArray(m.cruces.local) ? m.cruces.local : [m.cruces.local]
-        const letrasVis = Array.isArray(m.cruces.visitante) ? m.cruces.visitante : [m.cruces.visitante]
-        return `<tr>
-            <td class="col-num">${idxM + 1}</td>
-            <td class="col-cruce">
-                <span class="tipo">${m.tipo === 'DOBLES' ? 'Dobles' : 'Individual'}</span>
-                <b>${escaparHtmlHoja(m.etiqueta)}</b>
-            </td>
-            <td class="col-lado">${listaLado(letrasLoc, poolAbc, l => asignacion.abc[l as LetraLocal])}</td>
-            <td class="col-lado">${listaLado(letrasVis, poolXyz, l => asignacion.xyz[l as LetraVisitante])}</td>
-            <td class="col-resultado"><div class="linea"></div></td>
-        </tr>`
-    }).join('')
-
-    // Un bloque por encuentro incluido en el wizard; normalmente es 1.
-    // Cada bloque lleva SU árbitro con el equipo al que pertenece.
-    const secciones = partidos.map(p => `
-        <section class="serie">
-            <div class="serie-head">
-                <span class="serie-titulo">Encuentro #${p.orden}</span>
-                <span class="serie-arbitro">Árbitro: ${
-                    p.arbitro?.nombre?.trim()
-                        ? `<b>${escaparHtmlHoja(p.arbitro.nombre)}</b>${
-                            p.arbitro.equipo ? ` <span class="de">· de ${escaparHtmlHoja(p.arbitro.equipo)}</span>` : ''}`
-                        : '<span class="linea-arbitro"></span>'
-                }</span>
-            </div>
-            <table class="juegos">
-                <thead>
-                    <tr>
-                        <th class="col-num">#</th>
-                        <th class="col-cruce">Juego</th>
-                        <th class="col-lado">ABC · ${escaparHtmlHoja(nombreEquipoAbc)}</th>
-                        <th class="col-lado">XYZ · ${escaparHtmlHoja(nombreEquipoXyz)}</th>
-                        <th class="col-resultado">Sets ABC/XYZ</th>
-                    </tr>
-                </thead>
-                <tbody>${filasJuegos}</tbody>
-            </table>
-        </section>`).join('')
-
-    return {
-        titulo: `Hoja de partidos · ${nombreEquipoAbc} vs ${nombreEquipoXyz}`,
-        estilos: `
-            @page{size:letter portrait;margin:8mm}
-            *{box-sizing:border-box}
-            html,body{margin:0;padding:0;background:#ffffff}
-            body{font-family:Arial,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased}
-            .hoja{background:#ffffff;padding:22px;width:100%}
-            .cabecera{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 8px 12px;border-bottom:2.5px solid #0f172a}
-            .logo{height:64px;object-fit:contain}
-            .titulo-central{flex:1;text-align:center}
-            .titulo-principal{font-size:28px;font-weight:bold;font-style:italic;letter-spacing:1px;line-height:1.05}
-            .titulo-sub{font-size:12px;color:#475569;margin-top:3px;letter-spacing:.5px}
-            .encuentro-linea{display:flex;align-items:center;justify-content:center;gap:9px;margin-top:14px;font-size:17px}
-            .equipo-nombre{font-weight:bold}
-            .equipo-chip{display:inline-block;border:2px solid #0f172a;border-radius:6px;padding:1px 7px;font-size:12px;font-weight:bold;letter-spacing:1px;background:#f1f5f9}
-            .equipo-chip.xyz{background:#fef3c7}
-            .vs{color:#64748b;font-family:'Courier New',monospace;font-weight:bold}
-            .serie{margin-top:14px;page-break-inside:avoid}
-            .serie-head{display:flex;align-items:center;justify-content:space-between;gap:10px;border:2.5px solid #0f172a;padding:7px 12px;background:#f8fafc}
-            .serie-titulo{font-size:13px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;color:#334155}
-            .serie-arbitro{font-size:14px;color:#334155}
-            .serie-arbitro b{color:#0f172a;font-size:15px}
-            .serie-arbitro .de{color:#64748b;font-style:italic;font-size:13px}
-            .linea-arbitro{display:inline-block;width:170px;border-bottom:2px solid #94a3b8;height:14px}
-            table.juegos{width:100%;border-collapse:collapse}
-            table.juegos th,table.juegos td{border:2.5px solid #0f172a;padding:8px 11px;font-size:14px;vertical-align:middle}
-            table.juegos thead th{background:#f1f5f9;text-align:center;font-size:12px;letter-spacing:.6px;text-transform:uppercase}
-            th.col-num,td.col-num{width:38px;text-align:center;background:#f8fafc;font-weight:bold;font-size:18px}
-            th.col-cruce,td.col-cruce{width:150px;text-align:center;background:#f8fafc}
-            td.col-cruce .tipo{display:block;font-size:10.5px;color:#64748b;text-transform:uppercase;letter-spacing:.8px;margin-bottom:2px}
-            td.col-cruce b{font-family:'Courier New',monospace;font-size:15px}
-            th.col-resultado,td.col-resultado{width:130px}
-            td.col-resultado .linea{border-bottom:2.5px solid #94a3b8;height:40px;margin:0 6px}
-            td.col-lado ul.jugadores{list-style:none;margin:0;padding:0}
-            td.col-lado li{display:flex;align-items:center;gap:8px;padding:3px 0}
-            td.col-lado li + li{border-top:1px dashed #cbd5e1}
-            .letra{flex:none;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:2px solid #0f172a;border-radius:5px;font-weight:bold;font-size:14px;background:#ffffff}
-            .nom-jug{font-size:15px;font-weight:600;line-height:1.25}
-            .pie-nota{margin-top:12px;font-size:12px;color:#475569;text-align:right;font-style:italic;padding:0 6px}
-            .pie-nota b{color:#0f172a}
-            .pie-firmas{margin-top:26px;display:flex;justify-content:flex-end;gap:34px;padding:0 6px}
-            .firma-bloque{width:36%;text-align:center}
-            .firma-linea{border-bottom:2px solid #0f172a;height:30px}
-            .firma-label{font-size:11px;color:#475569;margin-top:3px;font-style:italic}
-        `,
-        cuerpo: `
-            <header class="cabecera">
-                <img class="logo" src="/logo.jpg" alt="ATTA" onerror="this.style.visibility='hidden'" />
-                <div class="titulo-central">
-                    <div class="titulo-principal">ATTA Teams</div>
-                    <div class="titulo-sub">${escaparHtmlHoja(torneoNombre)} · ${escaparHtmlHoja(categoria)}${modalidad === 'DOBLES' ? ' · Dobles' : ''}</div>
-                </div>
-                <img class="logo" src="/templates/escudo-panama.png" alt="Alcaldía de Panamá" onerror="this.style.visibility='hidden'" />
-            </header>
-            <div class="encuentro-linea">
-                <span class="equipo-chip">ABC</span><span class="equipo-nombre">${escaparHtmlHoja(nombreEquipoAbc)}</span>
-                <span class="vs">vs</span>
-                <span class="equipo-nombre">${escaparHtmlHoja(nombreEquipoXyz)}</span><span class="equipo-chip xyz">XYZ</span>
-            </div>
-            ${secciones}
-            <div class="pie-nota">Anota el tanteo final de cada juego con formato <b>ABC / XYZ</b>.</div>
-            <footer class="pie-firmas">
-                <div class="firma-bloque">
-                    <div class="firma-linea"></div>
-                    <div class="firma-label">Firma del árbitro</div>
-                </div>
-                <div class="firma-bloque">
-                    <div class="firma-linea"></div>
-                    <div class="firma-label">Firma del capitán del equipo ganador</div>
-                </div>
-            </footer>
-        `,
-    }
 }
 
 // ── Componente principal ─────────────────────────────────────────────
@@ -477,21 +310,32 @@ export default function EncuentroEquiposWizardModal({
         if (!ladoAbc) throw new Error('Sin lado ABC elegido')
         const equipoAbc = ladoAbc === 'visitante' ? equipos.visitante : equipos.local
         const equipoXyz = ladoAbc === 'visitante' ? equipos.local : equipos.visitante
-        const doc = construirHojaPartidos({
+        const poolAbc = (ladoAbc === 'visitante' ? equipos.visitante : equipos.local).miembros.map(m => m.jugadores)
+        const poolXyz = (ladoAbc === 'visitante' ? equipos.local : equipos.visitante).miembros.map(m => m.jugadores)
+        // Letras → jugador real usando el estado ACTUAL del wizard.
+        const aJugador = (j?: Jugador): JugadorHoja | undefined => j ? { id: j.id, nombre: j.nombre } : undefined
+        const abc: LetrasHoja['abc'] = {}
+        const xyz: LetrasHoja['xyz'] = {}
+        for (const letra of LETRAS_LOC) {
+            const id = asignacion.abc[letra]
+            const j = id ? poolAbc.find(x => x.id === id) : undefined
+            if (j) abc[letra] = aJugador(j)
+        }
+        for (const letra of LETRAS_VIS) {
+            const id = asignacion.xyz[letra]
+            const j = id ? poolXyz.find(x => x.id === id) : undefined
+            if (j) xyz[letra] = aJugador(j)
+        }
+        await descargarHojaPartidosPng({
             torneoNombre: torneo.nombre,
             categoria,
             modalidad,
-            ladoAbc,
-            equipos,
-            asignacion,
-            partidos,
+            encuentroOrden: partidos[0]?.orden,
+            nombreEquipoAbc: nombreEquipo(equipoAbc),
+            nombreEquipoXyz: nombreEquipo(equipoXyz),
+            alineacion: { abc, xyz },
+            arbitro: partidos[0]?.arbitro ?? null,
         })
-        await descargarPngDeDoc(
-            doc,
-            900,
-            `hoja-partidos-${slugArchivo(nombreEquipo(equipoAbc))}-vs-${slugArchivo(nombreEquipo(equipoXyz))}.png`,
-            '#ffffff',
-        )
     }
 
     /** Handler del botón manual: envuelve la generación con estado de
