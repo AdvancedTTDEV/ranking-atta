@@ -796,7 +796,9 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
     const equipoDeJugador = useMemo(() => {
         const mapa = new Map<number, string>()
         for (const p of partidos) {
-            const registrar = (part: Participante) => {
+            const registrar = (part: Participante | null) => {
+                // Cruces «por definir»: aún no tienen participante asignado.
+                if (!part) return
                 part.miembros?.forEach(m => mapa.set(m.jugador_id, nombreParticipante(part)))
                 if (part.jugadores) mapa.set(part.jugadores.id, nombreParticipante(part))
             }
