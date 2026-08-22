@@ -153,7 +153,9 @@ export function construirDocHojaPartidos({
             *{box-sizing:border-box}
             html,body{margin:0;padding:0;background:#ffffff}
             body{font-family:Arial,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased}
-            .hoja{background:#ffffff;padding:20px;width:100%}
+            /* Tamaño carta exacto: 850×1100 px = 8.5×11 pulgadas (100 px/in),
+               capturado a pixelRatio 2 → PNG 1700×2200 (200 DPI). */
+            .hoja{background:#ffffff;padding:36px 42px;width:850px;height:1100px;display:flex;flex-direction:column}
             .cabecera{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 8px 10px;border-bottom:2.5px solid #0f172a}
             .logo{height:58px;object-fit:contain}
             .titulo-central{flex:1;text-align:center}
@@ -183,21 +185,22 @@ export function construirDocHojaPartidos({
             td.col-lado li+li{border-top:1px dashed #cbd5e1}
             .letra{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1.5px solid #0f172a;border-radius:5px;font-weight:bold;font-size:12px;background:#ffffff}
             .nom-jug{font-size:13px;font-weight:600;line-height:1.25}
-            th.col-set{width:46px;background:#eef2f7}
-            th.col-total{width:52px;background:#eef2f7}
-            td.col-set{padding:3px 5px}
-            td.col-set .slot{display:flex;align-items:center;gap:4px;margin:4px 0}
-            td.col-set .slot i{flex:none;width:12px;font-style:normal;font-size:8.5px;font-weight:bold;color:#94a3b8;text-align:center}
-            td.col-set .slot .linea{flex:1;border-bottom:2px solid #94a3b8;height:19px}
+            th.col-set{width:66px;background:#eef2f7}
+            th.col-total{width:74px;background:#eef2f7}
+            td.col-set{padding:6px 7px}
+            td.col-set .slot{display:flex;align-items:flex-end;gap:5px;margin:7px 0}
+            td.col-set .slot i{flex:none;width:14px;font-style:normal;font-size:10px;font-weight:bold;color:#94a3b8;text-align:center;padding-bottom:2px}
+            td.col-set .slot .linea{flex:1;border-bottom:2.5px solid #94a3b8;height:34px}
             td.col-total{background:#f8fafc}
-            td.col-total .slot i{color:#334155;width:14px}
-            td.col-total .slot .linea{height:21px}
+            td.col-total .slot i{color:#334155;width:16px}
+            td.col-total .slot .linea{height:36px}
             tfoot td{background:#eef2f7;border-top:2.5px solid #0f172a}
             tfoot .serie-total-label{text-align:right;font-size:11px;font-weight:bold;letter-spacing:.8px;text-transform:uppercase;color:#334155}
             .leyenda-sets{margin-top:6px;font-size:10.5px;color:#64748b;font-style:italic;text-align:right}
-            .pie-nota{margin-top:8px;font-size:12px;color:#475569;text-align:right;font-style:italic;padding:0 6px}
+            .pie-nota{margin-top:10px;font-size:12px;color:#475569;text-align:right;font-style:italic;padding:0 6px}
             .pie-nota b{color:#0f172a}
-            .pie-firmas{margin-top:24px;display:flex;justify-content:flex-end;gap:34px;padding:0 6px}
+            /* En página carta fija, las firmas se anclan al pie de la hoja. */
+            .pie-firmas{margin-top:auto;padding-top:28px;display:flex;justify-content:flex-end;gap:34px;padding-left:6px;padding-right:6px}
             .firma-bloque{width:36%;text-align:center}
             .firma-linea{border-bottom:2px solid #0f172a;height:30px}
             .firma-label{font-size:11px;color:#475569;margin-top:3px;font-style:italic}
@@ -262,7 +265,7 @@ export async function descargarHojaPartidosPng(params: HojaPartidosParams): Prom
     const doc = construirDocHojaPartidos(params)
     await descargarPngDeDoc(
         doc,
-        940,
+        850,
         `hoja-partidos-${slugArchivo(params.nombreEquipoAbc)}-vs-${slugArchivo(params.nombreEquipoXyz)}.png`,
         '#ffffff',
     )
