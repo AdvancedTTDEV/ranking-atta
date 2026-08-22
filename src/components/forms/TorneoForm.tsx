@@ -200,7 +200,7 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
                         {modalidad === 'ATTA_TEAMS' ? (
                             <>
                                 <b>ATTA Teams:</b> los equipos se arman con jugadores de todos los clubes
-                                (máx. 1 de primera y 1 de segunda, o sin primera y máx. 2 de segunda;
+                                (máx. 2 de primera y 1 de segunda, o sin primera y máx. 2 de segunda;
                                 el resto de tercera/cuarta). De cada grupo clasifican 3 equipos:
                                 el 1º a la llave de primera, el 2º a la de segunda y el 3º a la de tercera.
                             </>

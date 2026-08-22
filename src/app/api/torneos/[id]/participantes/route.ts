@@ -88,7 +88,7 @@ export async function POST(request: Request, { params }: RouteParams) {
             categoriaIdFinal = ancla.id
 
             // Validación de composición: cada equipo puede tener
-            //   A) máx. 1 de primera + máx. 1 de segunda (resto 3ra/4ta), o
+            //   A) máx. 2 de primera + máx. 1 de segunda (resto 3ra/4ta), o
             //   B) sin primera + máx. 2 de segunda (resto 3ra/4ta).
             const todosIds = [...new Set<number>(
                 inscripciones.flatMap((i: { jugadoresIds?: (number | string)[] }) => (i.jugadoresIds ?? []).map(Number))
@@ -109,10 +109,10 @@ export async function POST(request: Request, { params }: RouteParams) {
                 }
                 const nPrimera = series.filter(s => s === 'primera').length
                 const nSegunda = series.filter(s => s === 'segunda').length
-                const composicionValida = (nPrimera <= 1 && nSegunda <= 1) || (nPrimera === 0 && nSegunda <= 2)
+                const composicionValida = (nPrimera <= 2 && nSegunda <= 1) || (nPrimera === 0 && nSegunda <= 2)
                 if (!composicionValida) {
                     return NextResponse.json({
-                        error: `${nombreEquipo}: composición inválida. Permitido: máx. 1 de primera y máx. 1 de segunda, o sin primera y máx. 2 de segunda (el resto debe ser de tercera o cuarta).`
+                        error: `${nombreEquipo}: composición inválida. Permitido: máx. 2 de primera y máx. 1 de segunda, o sin primera y máx. 2 de segunda (el resto debe ser de tercera o cuarta).`
                     }, { status: 400 })
                 }
             }

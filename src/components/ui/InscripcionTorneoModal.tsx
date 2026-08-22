@@ -247,9 +247,9 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo, onNave
                 }
                 const nPrimera = series.filter(s => s === 'primera').length
                 const nSegunda = series.filter(s => s === 'segunda').length
-                const valida = (nPrimera <= 1 && nSegunda <= 1) || (nPrimera === 0 && nSegunda <= 2)
+                const valida = (nPrimera <= 2 && nSegunda <= 1) || (nPrimera === 0 && nSegunda <= 2)
                 if (!valida) {
-                    toast.error('Composición inválida: máx. 1 de primera y 1 de segunda, o sin primera y máx. 2 de segunda (resto de tercera/cuarta)')
+                    toast.error('Composición inválida: máx. 2 de primera y 1 de segunda, o sin primera y máx. 2 de segunda (resto de tercera/cuarta)')
                     return
                 }
             }
@@ -401,7 +401,7 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo, onNave
                         {modalidad === 'ATTA_TEAMS' ? (
                             <>
                                 <b>ATTA Teams:</b> arma equipos mezclando jugadores de todos los clubes.
-                                Composición: máx. 1 de primera y máx. 1 de segunda, o sin primera y
+                                Composición: máx. 2 de primera y máx. 1 de segunda, o sin primera y
                                 máx. 2 de segunda; el resto debe ser de tercera o cuarta.
                             </>
                         ) : (
