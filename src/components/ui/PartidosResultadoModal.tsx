@@ -229,7 +229,7 @@ export default function PartidosResultadoModal({
             // No se puede añadir un borrador sobre un partido ya cerrado.
             // La vista ya deshabilita los inputs, pero cubrimos el atajo
             // de Enter por si el foco quedó en un botón.
-            toast.error('Este partido ya fue guardado. Revertirlo será parte del siguiente paso.')
+            toast.error('Este partido ya fue guardado. Usa «Deshacer resultado» para revertirlo.')
             return
         }
         const sets = marcadores
@@ -282,6 +282,17 @@ export default function PartidosResultadoModal({
         }
     }
 
+    /** Deshace la SERIE completa por equipos: revierte los sub-partidos
+     *  guardados (ranking incluido) y el encuentro vuelve a pendiente. */
+    const deshacerSerie = () => {
+        if (!seleccionado) return
+        const finalizadas = seleccionado.detalles.filter(d => d.estado === 'FINALIZADO').length
+        if (!window.confirm(
+            `¿Deshacer la serie completa? Se revertirán ${finalizadas} juego${finalizadas === 1 ? '' : 's'} guardado${finalizadas === 1 ? '' : 's'} y su efecto en el ranking. La alineación se conserva.`,
+        )) return
+        void deshacerResultado()
+    }
+
     const cerrar = () => {
         const cantidad = Object.keys(borradores).length
         if (cantidad > 0) {
@@ -313,6 +324,16 @@ export default function PartidosResultadoModal({
                                 <ExclamationTriangleIcon className="h-3.5 w-3.5" />
                                 {numeroBorradores} borrador{numeroBorradores === 1 ? '' : 'es'} sin enviar
                             </span>
+                        )}
+                        {seleccionado.estado === 'FINALIZADO' && (
+                            <Button
+                                variant="danger"
+                                onClick={deshacerSerie}
+                                isLoading={guardando}
+                                leadingIcon={<ArrowPathIcon className="h-4 w-4" />}
+                            >
+                                Deshacer serie
+                            </Button>
                         )}
                         <Button variant="secondary" onClick={cerrar}>Cerrar</Button>
                     </>

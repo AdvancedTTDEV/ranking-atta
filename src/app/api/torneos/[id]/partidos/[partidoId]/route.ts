@@ -75,7 +75,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
         })
         if (!partido) return NextResponse.json({ error: 'Partido no encontrado' }, { status: 404 })
         if (!partido.participante_local || !partido.participante_visitante) return NextResponse.json({ error: 'La llave aún no tiene ambos participantes' }, { status: 400 })
-        if (partido.estado === 'FINALIZADO') return NextResponse.json({ error: 'Este resultado ya fue guardado. Revertirlo será parte del siguiente paso.' }, { status: 409 })
+        if (partido.estado === 'FINALIZADO') return NextResponse.json({ error: 'Este resultado ya fue guardado' }, { status: 409 })
         if (partido.torneos.modalidad === 'EQUIPOS' || partido.torneos.modalidad === 'ATTA_TEAMS') {
             return NextResponse.json({ error: 'Los encuentros por equipos requieren registrar sus 5 partidos internos; se habilitarán con el módulo de equipos.' }, { status: 400 })
         }
@@ -162,7 +162,62 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
         const participanteVisitante = partido.participante_visitante
         if (!participanteLocal || !participanteVisitante) return NextResponse.json({ error: 'El partido no tiene ambos participantes' }, { status: 400 })
         if (partido.estado !== 'FINALIZADO') return NextResponse.json({ error: 'El partido no tiene resultado para deshacer' }, { status: 400 })
-        if (partido.torneos.modalidad === 'EQUIPOS' || partido.torneos.modalidad === 'ATTA_TEAMS') return NextResponse.json({ error: 'La reversión de series por equipos se habilitará junto con sus llaves' }, { status: 400 })
+
+        // ── Series por equipos (EQUIPOS / ATTA_TEAMS) ──────────────────
+        // Revierte TODOS los sub-partidos guardados: cada individual
+        // revierte su movimiento de ranking (mismo SP que el historial),
+        // se borran los sets y el encuentro vuelve a PENDIENTE. La
+        // alineación se conserva para no reconfigurar el wizard.
+        if (partido.torneos.modalidad === 'EQUIPOS' || partido.torneos.modalidad === 'ATTA_TEAMS') {
+            const esSub21 = partido.torneos.sub21
+            const detalles = await prisma.torneo_partido_detalles.findMany({
+                where: { partido_programado_id: partido.id },
+                orderBy: { orden: 'asc' },
+                include: { jugadores: { orderBy: { orden: 'asc' } } }
+            })
+            await prisma.$transaction(async tx => {
+                for (const detalle of detalles) {
+                    if (detalle.estado !== 'FINALIZADO') continue
+                    // El dobles cuenta en la serie pero no toca el ranking;
+                    // Sub 21 tampoco vale para ELO.
+                    if (detalle.tipo !== 'INDIVIDUAL' || esSub21) continue
+                    const local = detalle.jugadores.find(j => j.lado === 'LOCAL')?.jugador_id
+                    const visitante = detalle.jugadores.find(j => j.lado === 'VISITANTE')?.jugador_id
+                    if (!local || !visitante) throw new Error('No se pudo identificar a los jugadores del sub-partido')
+                    // Solo se revierte el último partido individual entre ambos
+                    // dentro del torneo; es el mismo criterio que usa el historial.
+                    const filaRanking = await tx.partidos.findFirst({
+                        where: {
+                            torneo_id: torneoId,
+                            OR: [
+                                { jugador1_id: local, jugador2_id: visitante },
+                                { jugador1_id: visitante, jugador2_id: local }
+                            ]
+                        },
+                        orderBy: { id: 'desc' },
+                        select: { id: true }
+                    })
+                    if (!filaRanking) throw new Error(`No se encontró el movimiento de ranking del juego #${detalle.orden}`)
+// Forzamos la collation de la sesión a la del ENUM de la tabla
+                    // para que las comparaciones internas del SP no mezclen colaciones.
+                    await prisma.$executeRawUnsafe(`SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;`)
+                    await tx.$executeRaw`CALL revertir_partido(${filaRanking.id})`
+                }
+
+                await tx.torneo_partido_detalle_sets.deleteMany({
+                    where: { detalle: { partido_programado_id: partido.id } }
+                })
+                await tx.torneo_partido_detalles.updateMany({
+                    where: { partido_programado_id: partido.id, estado: 'FINALIZADO' },
+                    data: { sets_local: 0, sets_visitante: 0, ganador_lado: null, estado: 'PENDIENTE' }
+                })
+                await tx.torneo_partidos_programados.update({
+                    where: { id: partido.id },
+                    data: { sets_local: 0, sets_visitante: 0, ganador_participante_id: null, estado: 'PENDIENTE' }
+                })
+            }, { maxWait: 10_000, timeout: 30_000 })
+            return NextResponse.json({ success: true })
+        }
 
         // Reversión atómica: SP de ranking, borrado de sets y reset del partido
         // se confirman o se revierten juntos.
