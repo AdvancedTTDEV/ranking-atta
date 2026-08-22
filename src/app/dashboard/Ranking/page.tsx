@@ -4,7 +4,6 @@ import Header from '@/components/ui/Header'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { DashboardGate } from '@/components/ui/DashboardGate'
 import RankingWrapper from '@/components/dashboard/RankingWrapper'
-import AscensosDescensosWrapper from '@/components/dashboard/AscensosDescensosWrapper'
 
 export default function RankingPage() {
     return (
@@ -18,7 +17,6 @@ export default function RankingPage() {
                             subtitle="Visualiza el ranking oficial y gestiona ascensos/descensos"
                         />
                         <div className="space-y-6">
-                            <AscensosDescensosWrapper />
                             <RankingWrapper />
                         </div>
                     </DashboardGate>

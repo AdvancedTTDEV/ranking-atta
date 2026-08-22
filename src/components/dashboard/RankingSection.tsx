@@ -1,19 +1,29 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import DataTable from '@/components/ui/DataTable'
-import { ArrowDownTrayIcon } from '@heroicons/react/24/outline'
+import {
+    ArrowDownTrayIcon,
+    TrophyIcon,
+    UserGroupIcon,
+    FireIcon,
+    ChartBarIcon,
+    Squares2X2Icon,
+} from '@heroicons/react/24/outline'
 import { Section } from '@/components/ui/Section'
-import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import toast from 'react-hot-toast'
+import { useRecurso } from '@/app/hooks/useRecurso';
+import Buscador, { useDebounce } from '@/components/ui/Buscador'
+import AscensosDescensosCard from '@/components/dashboard/AscensosDescensosCard'
 
 type Jugador = {
     id: number
-    ranking: number
+    ranking?: number
     nombre: string
     elo: number
     clubes?: { nombre?: string }
-    categorias?: { nombre?: string }
+    categorias?: { id?: number; nombre?: string }
 }
 
 type Categoria = {
@@ -21,69 +31,77 @@ type Categoria = {
     nombre: string
 }
 
+type RankingResponse = {
+    jugadores: Jugador[]
+    total: number
+}
+
+const ICONOS = [Squares2X2Icon, TrophyIcon, UserGroupIcon, FireIcon, ChartBarIcon]
+
 export default function RankingSection({ className = '' }) {
-    const [jugadores, setJugadores] = useState<Jugador[]>([])
-    const [categorias, setCategorias] = useState<Categoria[]>([])
     const [selectedCategoriaId, setSelectedCategoriaId] = useState<string>('')
     const [currentPage, setCurrentPage] = useState(1)
     const [itemsPerPage, setItemsPerPage] = useState(10)
-    const [totalItems, setTotalItems] = useState(0)
-    const [isLoading, setIsLoading] = useState(false)
+    const [pdfLoading, setPdfLoading] = useState(false)
+    const [busqueda, setBusqueda] = useState('')
+    const busquedaDebounce = useDebounce(busqueda)
 
-    const fetchCategorias = async () => {
-        try {
-            const response = await fetch('/api/categorias')
-            const data = await response.json()
-            setCategorias(data)
-        } catch (error) {
-            console.error('Error fetching categories:', error)
+    // Listado paginado del escalafón (server-side).
+    const { datos, isLoading, refresh } = useRecurso<RankingResponse>(
+        `/api/ranking?page=${currentPage}&limit=${itemsPerPage}${
+            selectedCategoriaId ? `&categoriaId=${selectedCategoriaId}` : ''
+        }${busquedaDebounce ? `&nombre=${encodeURIComponent(busquedaDebounce)}` : ''}`
+    )
+    const { datos: datosCategorias } = useRecurso<Categoria[]>('/api/categorias')
+    const categorias = datosCategorias ?? []
+
+    // Descarga única (cacheada) para las estadísticas de las tarjetas:
+    // total por categoría, ELO promedio y líder.
+    const { datos: todos } = useRecurso<RankingResponse>('/api/ranking?all=true')
+
+    const estadisticasPorCategoria = useMemo(() => {
+        const mapa = new Map<number, { total: number; sumaElo: number; lider: Jugador | null }>()
+        for (const j of todos?.jugadores ?? []) {
+            const catId = j.categorias?.id
+            if (!catId) continue
+            const actual = mapa.get(catId) ?? { total: 0, sumaElo: 0, lider: null }
+            actual.total += 1
+            actual.sumaElo += Number(j.elo) || 0
+            if (!actual.lider || (Number(j.elo) || 0) > (Number(actual.lider.elo) || 0)) {
+                actual.lider = j
+            }
+            mapa.set(catId, actual)
         }
-    }
+        return mapa
+    }, [todos])
 
-    const fetchJugadores = async (page = 1, limit = 10) => {
-        setIsLoading(true)
-        try {
-            const url = `/api/ranking?page=${page}&limit=${limit}${
-                selectedCategoriaId ? `&categoriaId=${selectedCategoriaId}` : ''
-            }`
-            const response = await fetch(url)
-            if (!response.ok) throw new Error(`Error ${response.status}`)
-            const data = await response.json()
+    const statsTodas = useMemo(() => {
+        const lista = todos?.jugadores ?? []
+        const suma = lista.reduce((acc, j) => acc + (Number(j.elo) || 0), 0)
+        return { total: lista.length, promedio: lista.length ? Math.round(suma / lista.length) : 0 }
+    }, [todos])
 
-            const startRank = (page - 1) * limit + 1
-            const rankedData = data.jugadores.map((j: Jugador, index: number) => ({
-                ...j,
-                ranking: startRank + index,
-            }))
-
-            setJugadores(rankedData)
-            setTotalItems(data.total)
-        } catch (error) {
-            console.error('Error fetching ranking:', error)
-        } finally {
-            setIsLoading(false)
-        }
-    }
-
-    useEffect(() => {
-        fetchCategorias()
-    }, [])
-
+    // Al cambiar el filtro de categoría o la búsqueda, volver a la primera página.
     useEffect(() => {
         setCurrentPage(1)
-        fetchJugadores(1, itemsPerPage)
-    }, [selectedCategoriaId])
+    }, [selectedCategoriaId, busquedaDebounce])
 
-    useEffect(() => {
-        fetchJugadores(currentPage, itemsPerPage)
-    }, [currentPage, itemsPerPage])
+    // Número de ranking calculado de la página actual (1° global por página).
+    const jugadores: Jugador[] = useMemo(() => {
+        const startRank = (currentPage - 1) * itemsPerPage + 1
+        return (datos?.jugadores ?? []).map((j, index) => ({ ...j, ranking: startRank + index }))
+    }, [datos, currentPage, itemsPerPage])
 
     // Escucha el evento de refresh desde GestionAscensoDescenso
     useEffect(() => {
-        const handleRefresh = () => fetchJugadores(currentPage, itemsPerPage)
+        const handleRefresh = () => refresh()
         window.addEventListener('ranking:refresh', handleRefresh)
         return () => window.removeEventListener('ranking:refresh', handleRefresh)
-    }, [currentPage, itemsPerPage])
+    }, [refresh])
+
+    const seleccionarCategoria = (id: string) => {
+        setSelectedCategoriaId(id)
+    }
 
     const getCurrentMonth = (month: number, year: number, formatted: boolean) => {
         const monthMap = ['ENE','FEB','MAR','ABRIL','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC']
@@ -91,8 +109,8 @@ export default function RankingSection({ className = '' }) {
     }
 
     const handleDownloadPDF = async () => {
-        if (isLoading) return
-        setIsLoading(true)
+        if (pdfLoading) return
+        setPdfLoading(true)
         try {
             const url = `/api/ranking?all=true${
                 selectedCategoriaId ? `&categoriaId=${selectedCategoriaId}` : ''
@@ -152,11 +170,12 @@ export default function RankingSection({ className = '' }) {
                 document.body.removeChild(link)
                 window.URL.revokeObjectURL(downloadUrl)
             }, 100)
+            toast.success('PDF descargado')
         } catch (error) {
             console.error('Error detallado:', error)
-            alert('Error al generar el archivo. Revisa la consola para más detalles.')
+            toast.error('Error al generar el archivo PDF')
         } finally {
-            setIsLoading(false)
+            setPdfLoading(false)
         }
     }
 
@@ -181,6 +200,23 @@ export default function RankingSection({ className = '' }) {
             render: (nombre: string) => <span className="font-medium text-fg">{nombre}</span>,
         },
         {
+            header: 'Club',
+            accessor: 'clubes',
+            ocultarEnMovil: true,
+            render: (club: { nombre?: string }) => club?.nombre ?? <span className="text-fg-muted">—</span>,
+        },
+        {
+            header: 'Categoría',
+            accessor: 'categorias',
+            ocultarEnMovil: true,
+            render: (categoria: { nombre?: string }) =>
+                categoria?.nombre ? (
+                    <Badge variant="brand">{categoria.nombre}</Badge>
+                ) : (
+                    <span className="text-fg-muted">—</span>
+                ),
+        },
+        {
             header: 'ELO',
             accessor: 'elo',
             sortable: true,
@@ -189,62 +225,119 @@ export default function RankingSection({ className = '' }) {
                 <span className="font-mono text-sm tabular-nums text-fg">{elo}</span>
             ),
         },
-        {
-            header: 'Club',
-            accessor: 'clubes',
-            render: (club: { nombre?: string }) => club?.nombre ?? <span className="text-fg-muted">—</span>,
-        },
-        {
-            header: 'Categoría',
-            accessor: 'categorias',
-            render: (categoria: { nombre?: string }) =>
-                categoria?.nombre ? (
-                    <Badge variant="brand">{categoria.nombre}</Badge>
-                ) : (
-                    <span className="text-fg-muted">—</span>
-                ),
-        },
     ]
 
+    const categoriaSeleccionadaNombre =
+        categorias.find((c) => String(c.id) === selectedCategoriaId)?.nombre ?? ''
+
     return (
-        <Section
-            title="Ranking de Jugadores"
-            subtitle="Escalafón oficial de la ATTA"
-            className={className}
-            actions={
-                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-                    <Select
-                        value={selectedCategoriaId}
-                        onChange={(e) => setSelectedCategoriaId(e.target.value)}
-                        className="sm:w-48"
-                    >
-                        <option value="">Todas las categorías</option>
-                        {categorias.map((cat) => (
-                            <option key={cat.id} value={cat.id}>{cat.nombre}</option>
-                        ))}
-                    </Select>
+        <div className={`space-y-6 ${className}`}>
+            {/* Tarjetas de categoría — selección visual directa */}
+            <div className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-3">
+                <button
+                    type="button"
+                    onClick={() => seleccionarCategoria('')}
+                    aria-pressed={selectedCategoriaId === ''}
+                    className={`group text-left rounded-xl border p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fg/40 ${
+                        selectedCategoriaId === ''
+                            ? 'border-fg/50 bg-surface shadow-sm ring-1 ring-fg/20'
+                            : 'border-line bg-surface hover:border-fg/30'
+                    }`}
+                >
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-subtle text-fg-muted transition-colors group-hover:text-fg sm:h-9 sm:w-9">
+                            <Squares2X2Icon className="h-4 w-4 sm:h-5 sm:w-5" />
+                        </span>
+                        <span className="text-lg font-semibold tabular-nums text-fg sm:text-2xl">
+                            {statsTodas.total}
+                        </span>
+                    </div>
+                    <p className="mt-2 truncate text-sm font-medium capitalize text-fg sm:mt-3">General</p>
+                    <p className="mt-0.5 hidden text-xs text-fg-muted sm:block">
+                        ELO promedio {statsTodas.promedio} · Todas las categorías
+                    </p>
+                </button>
+
+                {(categorias ?? []).map((cat, i) => {
+                    const stats = estadisticasPorCategoria.get(cat.id)
+                    const Icono = ICONOS[(i + 1) % ICONOS.length]
+                    const activa = String(cat.id) === selectedCategoriaId
+                    const promedio =
+                        stats && stats.total > 0 ? Math.round(stats.sumaElo / stats.total) : 0
+                    return (
+                        <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() => seleccionarCategoria(String(cat.id))}
+                            aria-pressed={activa}
+                            className={`group text-left rounded-xl border p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fg/40 ${
+                                activa
+                                    ? 'border-fg/50 bg-surface shadow-sm ring-1 ring-fg/20'
+                                    : 'border-line bg-surface hover:border-fg/30'
+                            }`}
+                        >
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-subtle text-fg-muted transition-colors group-hover:text-fg sm:h-9 sm:w-9">
+                                    <Icono className="h-4 w-4 sm:h-5 sm:w-5" />
+                                </span>
+                                <span className="text-lg font-semibold tabular-nums text-fg sm:text-2xl">
+                                    {stats?.total ?? 0}
+                                </span>
+                            </div>
+                            <p className="mt-2 truncate text-sm font-medium capitalize text-fg sm:mt-3">{cat.nombre}</p>
+                            <p className="mt-0.5 hidden text-xs text-fg-muted sm:block">
+                                ELO promedio {promedio}
+                                {stats?.lider && (
+                                    <>
+                                        {' · Líder '}
+                                        <span className="font-medium text-fg">
+                                            {stats.lider.nombre}
+                                        </span>
+                                    </>
+                                )}
+                            </p>
+                        </button>
+                    )
+                })}
+
+                {/* Gestión de ascensos/descensos como una tarjeta más del grid */}
+                <AscensosDescensosCard />
+            </div>
+
+            <Section
+                title={categoriaSeleccionadaNombre ? `Ranking · ${categoriaSeleccionadaNombre}` : 'Ranking General'}
+                subtitle="Escalafón oficial de la ATTA"
+                actions={
                     <Button
                         onClick={handleDownloadPDF}
-                        isLoading={isLoading}
+                        isLoading={pdfLoading}
                         variant="secondary"
                         leadingIcon={<ArrowDownTrayIcon className="h-4 w-4" />}
                     >
                         Exportar PDF
                     </Button>
-                </div>
-            }
-        >
-            <DataTable
-                columns={columns}
-                data={jugadores}
-                currentPage={currentPage}
-                itemsPerPage={itemsPerPage}
-                totalItems={totalItems}
-                onPageChange={setCurrentPage}
-                onItemsPerPageChange={setItemsPerPage}
-                isLoading={isLoading}
-                rowKey={(row) => row.id}
-            />
-        </Section>
+                }
+            >
+                <DataTable
+                    toolbar={
+                        <Buscador
+                            valor={busqueda}
+                            onCambiar={setBusqueda}
+                            placeholder="Buscar jugador…"
+                            className="sm:w-64"
+                        />
+                    }
+                    columns={columns}
+                    data={jugadores}
+                    currentPage={currentPage}
+                    itemsPerPage={itemsPerPage}
+                    totalItems={datos?.total ?? 0}
+                    onPageChange={setCurrentPage}
+                    onItemsPerPageChange={setItemsPerPage}
+                    isLoading={isLoading}
+                    rowKey={(row) => row.id}
+                />
+            </Section>
+        </div>
     )
 }
