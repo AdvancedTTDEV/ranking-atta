@@ -995,6 +995,32 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                                 ? (partidoId) => setWizardPartidoId(partidoId)
                                 : undefined
                         }
+                        onReordenar={async (nuevoOrdenIds) => {
+                            if (!torneo || !categoriaId) return false
+                            try {
+                                const res = await fetch(`/api/torneos/${torneo.id}/partidos/reordenar`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        categoriaId: Number(categoriaId),
+                                        grupoId: grupo.id,
+                                        orden: nuevoOrdenIds,
+                                    }),
+                                })
+                                if (!res.ok) {
+                                    const data = await res.json().catch(() => ({}))
+                                    toast.error(data.error || 'No se pudo reordenar')
+                                    return false
+                                }
+                                toast.success('Orden guardado')
+                                // Refresca para confirmar el orden desde el backend
+                                await cargar(true)
+                                return true
+                            } catch {
+                                toast.error('Error de red al reordenar')
+                                return false
+                            }
+                        }}
                     />
                 )
             })()}

@@ -1,6 +1,13 @@
 'use client'
 
-import { ChevronLeftIcon, ChevronRightIcon, ExclamationTriangleIcon, UsersIcon } from '@heroicons/react/24/outline'
+import { useEffect, useState } from 'react'
+import {
+    ChevronLeftIcon,
+    ChevronRightIcon,
+    ExclamationTriangleIcon,
+    UsersIcon,
+    Bars3Icon,
+} from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -63,6 +70,9 @@ interface Props {
     totalGrupos: number
     onPrevGrupo: () => void
     onNextGrupo: () => void
+    /** Persiste un nuevo orden de cruces del grupo. Devuelve `true` si
+     *  tuvo éxito; `false` (o throw) hace rollback del UI optimista. */
+    onReordenar?: (nuevoOrdenIds: number[]) => Promise<boolean>
 }
 
 export default function PartidosGrupoModal({
@@ -76,19 +86,109 @@ export default function PartidosGrupoModal({
     totalGrupos,
     onPrevGrupo,
     onNextGrupo,
+    onReordenar,
 }: Props) {
+    // Estado local de reorden: empezamos con el orden del grupo y lo
+    // mutamos optimistamente; si el backend rechaza, hacemos rollback.
+    const [ordenLocal, setOrdenLocal] = useState<number[]>([])
+    const [draggingId, setDraggingId] = useState<number | null>(null)
+    const [dragOverId, setDragOverId] = useState<number | null>(null)
+    const [guardando, setGuardando] = useState(false)
+
+    // Sincronizar ordenLocal con el orden del grupo cada vez que cambia
+    // el grupo (o el orden remoto) — clave para cuando navegas entre
+    // grupos o cuando el backend reordena y nos devuelve datos nuevos.
+    useEffect(() => {
+        if (!grupo) return
+        const ids = grupo.partidos.map(p => p.id)
+        // Si la cantidad o el orden difiere, adoptamos el del grupo.
+        const mismo =
+            ordenLocal.length === ids.length &&
+            ordenLocal.every((id, i) => id === ids[i])
+        if (!mismo) setOrdenLocal(ids)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [grupo?.id, grupo?.partidos.map(p => p.id).join(',')])
+
     if (!grupo) return null
+
+    const partidosVisibles: Partido[] = (() => {
+        if (ordenLocal.length === grupo.partidos.length) {
+            const byId = new Map(grupo.partidos.map(p => [p.id, p]))
+            return ordenLocal.map(id => byId.get(id)).filter(Boolean) as Partido[]
+        }
+        return grupo.partidos
+    })()
+
     const hayAnterior = indiceGrupo > 0
     const haySiguiente = indiceGrupo < totalGrupos - 1
     const finalizados = grupo.partidos.filter(p => p.estado === 'FINALIZADO').length
     const conBorrador = grupo.partidos.filter(p => !!borradores[p.id]).length
+    const permiteReordenar = !!onReordenar && grupo.partidos.some(p => p.estado !== 'FINALIZADO')
+
+    const handleDragStart = (e: React.DragEvent, partidoId: number) => {
+        if (!permiteReordenar) {
+            e.preventDefault()
+            return
+        }
+        setDraggingId(partidoId)
+        e.dataTransfer.effectAllowed = 'move'
+        // Necesario para Firefox: dataTransfer.setData con cualquier string.
+        try {
+            e.dataTransfer.setData('text/plain', String(partidoId))
+        } catch {
+            // Algunos navegadores móviles no exponen setData; seguimos sin él.
+        }
+    }
+
+    const handleDragOver = (e: React.DragEvent, partidoId: number) => {
+        if (!permiteReordenar || draggingId === null) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        if (partidoId !== dragOverId) setDragOverId(partidoId)
+    }
+
+    const handleDragEnd = () => {
+        setDraggingId(null)
+        setDragOverId(null)
+    }
+
+    const handleDrop = async (e: React.DragEvent, targetId: number) => {
+        e.preventDefault()
+        if (!permiteReordenar || draggingId === null || draggingId === targetId) {
+            handleDragEnd()
+            return
+        }
+        const fromIdx = ordenLocal.indexOf(draggingId)
+        const toIdx = ordenLocal.indexOf(targetId)
+        if (fromIdx === -1 || toIdx === -1) {
+            handleDragEnd()
+            return
+        }
+        const siguiente = [...ordenLocal]
+        const [moved] = siguiente.splice(fromIdx, 1)
+        siguiente.splice(toIdx, 0, moved)
+        const previo = ordenLocal
+        setOrdenLocal(siguiente)
+        setDraggingId(null)
+        setDragOverId(null)
+        if (!onReordenar) return
+        setGuardando(true)
+        try {
+            const ok = await onReordenar(siguiente)
+            if (!ok) setOrdenLocal(previo)
+        } catch {
+            setOrdenLocal(previo)
+        } finally {
+            setGuardando(false)
+        }
+    }
 
     return (
         <Modal
             isOpen={isOpen}
             onClose={onClose}
             title={`Grupo ${grupo.numero} · ${grupo.partidos.length} cruce${grupo.partidos.length === 1 ? '' : 's'}`}
-            description={`${finalizados} finalizado${finalizados === 1 ? '' : 's'} · ${grupo.partidos.length - finalizados} pendiente${grupo.partidos.length - finalizados === 1 ? '' : 's'}${conBorrador > 0 ? ` · ${conBorrador} borrador${conBorrador === 1 ? '' : 'es'}` : ''}`}
+            description={`${finalizados} finalizado${finalizados === 1 ? '' : 's'} · ${grupo.partidos.length - finalizados} pendiente${grupo.partidos.length - finalizados === 1 ? '' : 's'}${conBorrador > 0 ? ` · ${conBorrador} borrador${conBorrador === 1 ? '' : 'es'}` : ''}${permiteReordenar ? ' · arrastra el ≡ para reordenar' : ''}`}
             size="lg"
             footer={
                 <>
@@ -119,10 +219,12 @@ export default function PartidosGrupoModal({
                 </>
             }
         >
-            <div className="space-y-2">
-                {grupo.partidos.map(partido => {
+            <div className="space-y-2" aria-busy={guardando}>
+                {partidosVisibles.map(partido => {
                     const finalizado = partido.estado === 'FINALIZADO'
                     const tieneBorrador = !!borradores[partido.id]
+                    const esArrastrable = permiteReordenar && !finalizado
+                    const esDragOver = dragOverId === partido.id && draggingId !== null && draggingId !== partido.id
                     // Estado de alineación: todos los sub-partidos tienen
                     // jugadores en ambos lados.
                     const alineado = (partido.detalles ?? []).length > 0
@@ -133,38 +235,63 @@ export default function PartidosGrupoModal({
                     return (
                         <div
                             key={partido.id}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => onSelectPartido(partido.id)}
-                            onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onSelectPartido(partido.id)}
-                            className="w-full p-3 text-left card-flush overflow-hidden hover:bg-subtle transition-colors flex flex-col sm:flex-row sm:items-center gap-2 cursor-pointer"
+                            className={`w-full p-3 text-left card-flush overflow-hidden transition-colors flex flex-col sm:flex-row sm:items-center gap-2 ${
+                                esDragOver
+                                    ? 'ring-2 ring-brand bg-brand/5'
+                                    : 'hover:bg-subtle'
+                            } ${esArrastrable ? 'cursor-pointer' : ''}`}
                         >
-                            <span className="chip w-7 text-center shrink-0">#{partido.orden}</span>
-                            <span className="flex-1 min-w-0">
-                                <span className="block font-semibold text-fg truncate">
-                                    {nombreParticipante(partido.participante_local)}
-                                </span>
-                                {partido.participante_local.miembros.length > 0 && (
-                                    <span className="block text-[11px] text-fg-muted truncate">
-                                        {partido.participante_local.miembros.map(miembro => miembro.jugadores.nombre).join(' · ')}
-                                    </span>
+                            {/* Handle de arrastre + número de orden */}
+                            <span
+                                draggable={esArrastrable}
+                                onDragStart={(e) => handleDragStart(e, partido.id)}
+                                onDragOver={(e) => handleDragOver(e, partido.id)}
+                                onDragEnd={handleDragEnd}
+                                onDrop={(e) => handleDrop(e, partido.id)}
+                                onClick={(e) => e.stopPropagation()}
+                                className={`flex items-center gap-1 shrink-0 ${
+                                    esArrastrable ? 'cursor-grab active:cursor-grabbing touch-none' : 'cursor-default'
+                                }`}
+                                aria-label={esArrastrable ? `Arrastrar para reordener cruce ${partido.orden}` : undefined}
+                                title={esArrastrable ? 'Arrastra para reordenar' : undefined}
+                            >
+                                {esArrastrable && (
+                                    <Bars3Icon className="h-4 w-4 text-fg-muted" aria-hidden="true" />
                                 )}
+                                <span className="chip w-7 text-center">#{partido.orden}</span>
                             </span>
-                            <span className="font-mono font-bold text-fg text-sm">
-                                {finalizado
-                                    ? `${partido.sets_local} : ${partido.sets_visitante}`
-                                    : <span className="text-fg-muted font-normal">vs</span>}
-                            </span>
-                            <span className="flex-1 min-w-0">
-                                <span className="block font-semibold text-fg truncate">
-                                    {nombreParticipante(partido.participante_visitante)}
-                                </span>
-                                {partido.participante_visitante.miembros.length > 0 && (
-                                    <span className="block text-[11px] text-fg-muted truncate">
-                                        {partido.participante_visitante.miembros.map(miembro => miembro.jugadores.nombre).join(' · ')}
+                            {/* Contenido clickable */}
+                            <button
+                                type="button"
+                                onClick={() => onSelectPartido(partido.id)}
+                                className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center gap-2 text-left"
+                            >
+                                <span className="flex-1 min-w-0">
+                                    <span className="block font-semibold text-fg truncate">
+                                        {nombreParticipante(partido.participante_local)}
                                     </span>
-                                )}
-                            </span>
+                                    {partido.participante_local.miembros.length > 0 && (
+                                        <span className="block text-[11px] text-fg-muted truncate">
+                                            {partido.participante_local.miembros.map(miembro => miembro.jugadores.nombre).join(' · ')}
+                                        </span>
+                                    )}
+                                </span>
+                                <span className="font-mono font-bold text-fg text-sm">
+                                    {finalizado
+                                        ? `${partido.sets_local} : ${partido.sets_visitante}`
+                                        : <span className="text-fg-muted font-normal">vs</span>}
+                                </span>
+                                <span className="flex-1 min-w-0">
+                                    <span className="block font-semibold text-fg truncate">
+                                        {nombreParticipante(partido.participante_visitante)}
+                                    </span>
+                                    {partido.participante_visitante.miembros.length > 0 && (
+                                        <span className="block text-[11px] text-fg-muted truncate">
+                                            {partido.participante_visitante.miembros.map(miembro => miembro.jugadores.nombre).join(' · ')}
+                                        </span>
+                                    )}
+                                </span>
+                            </button>
                             <span className="text-xs text-fg-muted hidden md:inline shrink-0">
                                 Árbitro: <b className="text-fg">{partido.arbitro?.nombre || 'Asignar'}</b>
                             </span>

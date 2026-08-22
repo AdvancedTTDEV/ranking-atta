@@ -179,6 +179,7 @@ export default function TorneosSection({ className = '' }) {
         <Section
             title="Torneos"
             subtitle="Gestión de torneos y llaves"
+            compact
             className={className}
             actions={
                 showForm ? null : (

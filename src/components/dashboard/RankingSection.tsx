@@ -16,6 +16,7 @@ import toast from 'react-hot-toast'
 import { useRecurso } from '@/app/hooks/useRecurso';
 import Buscador, { useDebounce } from '@/components/ui/Buscador'
 import AscensosDescensosCard from '@/components/dashboard/AscensosDescensosCard'
+import { descargarBlob } from '@/lib/descargar-archivo'
 
 type Jugador = {
     id: number
@@ -159,17 +160,8 @@ export default function RankingSection({ className = '' }) {
             }
 
             const blob = await pdfResponse.blob()
-            const downloadUrl = window.URL.createObjectURL(blob)
-            const link = document.createElement('a')
-            link.href = downloadUrl
             const safeName = categoriaNombre.replace(/[^a-z0-9]/gi, '_')
-            link.download = `Ranking_ATTA_${safeName}_${mesAnioFile}.pdf`
-            document.body.appendChild(link)
-            link.click()
-            setTimeout(() => {
-                document.body.removeChild(link)
-                window.URL.revokeObjectURL(downloadUrl)
-            }, 100)
+            descargarBlob(blob, `Ranking_ATTA_${safeName}_${mesAnioFile}.pdf`)
             toast.success('PDF descargado')
         } catch (error) {
             console.error('Error detallado:', error)
