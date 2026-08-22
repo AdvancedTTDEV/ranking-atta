@@ -278,6 +278,7 @@ export default function PartidosSection() {
         <Section
             title="Partidos"
             subtitle="Historial de partidos y resultados"
+            compact
             actions={
                 !showForm && (
                     <Button

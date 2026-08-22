@@ -127,6 +127,7 @@ export default function ClubesSection() {
         <Section
             title="Clubes"
             subtitle="Administra los clubes afiliados"
+            compact
             actions={
                 showForm ? null : (
                     <Button
