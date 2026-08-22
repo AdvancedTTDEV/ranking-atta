@@ -1,7 +1,11 @@
 import prisma from '@/lib/prisma'
 import { NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/auth'
 
 export async function GET(request: Request) {
+  const unauthorized = await requireAuth()
+  if (unauthorized) return unauthorized
+
   try {
     const { searchParams } = new URL(request.url)
     const all = searchParams.get('all') === 'true'
@@ -55,34 +59,26 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const unauthorized = await requireAuth()
+  if (unauthorized) return unauthorized
+
   try {
     const { nombre } = await request.json()
     const nuevoClub = await prisma.clubes.create({ data: { nombre } })
     return NextResponse.json(nuevoClub, { status: 201 })
   } catch (error: any) {
     console.error('Error creating club:', error)
-    
+
     if (error.code === 'P2002') {
       return NextResponse.json(
         { error: "Ya existe un club con este nombre" },
         { status: 400 }
       )
     }
-    
+
     return NextResponse.json(
       { error: "Error al crear club" },
       { status: 500 }
     )
   }
-}
-
-export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    }
-  })
 }

@@ -1,5 +1,6 @@
 import prisma from '@/lib/prisma'
 import { NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/auth'
 
 /**
  * Permite reordenar manualmente las posiciones de los participantes de un
@@ -23,6 +24,9 @@ interface RouteParams {
 }
 
 export async function PUT(request: Request, { params }: RouteParams) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const { id, grupoId } = await params
         const torneoId = Number(id)

@@ -1,11 +1,15 @@
 import prisma from '@/lib/prisma'
 import { NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/auth'
 
 interface RouteParams {
     params: Promise<{ id: string }>
 }
 
 export async function GET(request: Request, { params }: RouteParams) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const { id } = await params
         const torneoId = Number(id)
@@ -24,11 +28,11 @@ export async function GET(request: Request, { params }: RouteParams) {
                         torneo_participantes: {
                             include: {
                                 jugadores: {
-                                    include: { clubes: true }
+                                    include: { clubes: true, categorias: true }
                                 },
                                 miembros: {
                                     orderBy: { orden: 'asc' },
-                                    include: { jugadores: { include: { clubes: true } } }
+                                    include: { jugadores: { include: { clubes: true, categorias: true } } }
                                 }
                             }
                         }
@@ -44,6 +48,9 @@ export async function GET(request: Request, { params }: RouteParams) {
 }
 
 export async function POST(request: Request, { params }: RouteParams) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const { id } = await params
         const torneoId = Number(id)
@@ -140,33 +147,41 @@ export async function POST(request: Request, { params }: RouteParams) {
                 await tx.torneo_grupos.deleteMany({ where: { id: { in: viejosIds } } })
             }
 
-            for (let i = 0; i < numGrupos; i++) {
-                const nuevoGrupo = await tx.torneo_grupos.create({
-                    data: {
-                        torneo_id: torneoId,
-                        categoria_id: Number(categoriaId),
-                        numero_grupo: i + 1,
-                    }
-                })
+            // Un solo INSERT para todos los grupos y otro para todas las
+            // asignaciones: por túnel, N consultas secuenciales revientan
+            // el timeout de la transacción aunque sean rápidas en local.
+            await tx.torneo_grupos.createMany({
+                data: Array.from({ length: numGrupos }, (_, i) => ({
+                    torneo_id: torneoId,
+                    categoria_id: Number(categoriaId),
+                    numero_grupo: i + 1,
+                }))
+            })
 
-                if (gruposTemp[i].length > 0) {
-                    await tx.torneo_grupo_participantes.createMany({
-                        data: gruposTemp[i].map(p => ({
-                            grupo_id: nuevoGrupo.id,
-                            torneo_participante_id: p.id
-                            // `posicion` queda null: solo se setea cuando el
-                            // operador resuelve un empate (PUT /posiciones).
-                            // Esto evita que el sembrado inicial de los
-                            // grupos contamine el cálculo de "desempate
-                            // manual" en la clasificación.
-                        }))
-                    })
-                }
+            const creados = await tx.torneo_grupos.findMany({
+                where: { torneo_id: torneoId, categoria_id: Number(categoriaId) },
+                orderBy: { numero_grupo: 'asc' },
+                select: { id: true }
+            })
+
+            const asignaciones = creados.flatMap((grupoCreado, i) =>
+                (gruposTemp[i] ?? []).map(p => ({
+                    grupo_id: grupoCreado.id,
+                    torneo_participante_id: p.id
+                    // `posicion` queda null: solo se setea cuando el
+                    // operador resuelve un empate (PUT /posiciones).
+                    // Esto evita que el sembrado inicial de los
+                    // grupos contamine el cálculo de "desempate
+                    // manual" en la clasificación.
+                }))
+            )
+            if (asignaciones.length > 0) {
+                await tx.torneo_grupo_participantes.createMany({ data: asignaciones })
             }
-        },{
-            timeout: 20000
-        }
-    )
+        }, {
+            maxWait: 10_000,
+            timeout: 60_000
+        })
 
         return NextResponse.json({ success: true, message: "Grupos generados exitosamente" })
     } catch (error: any) {

@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { requireAuth } from '@/lib/auth'
 
 export async function POST(req: NextRequest) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const { jugadores, nuevaCategoriaId, motivo } = await req.json()
 

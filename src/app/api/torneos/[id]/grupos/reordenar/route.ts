@@ -1,11 +1,15 @@
 import prisma from '@/lib/prisma'
 import { NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/auth'
 
 interface RouteParams {
     params: Promise<{ id: string }>
 }
 
 export async function PUT(request: Request, { params }: RouteParams) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const { id } = await params
         const torneoId = Number(id)

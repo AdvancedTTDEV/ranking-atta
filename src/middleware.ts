@@ -1,26 +1,15 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
+// La app es same-origin: no exponemos cabeceras CORS. Al responder a los
+// preflight OPTIONS sin cabeceras Access-Control-*, los navegadores bloquean
+// cualquier request cross-origin hacia la API.
 export function middleware(request: NextRequest) {
-  const response = NextResponse.next()
-  
-  // Set CORS headers
-  response.headers.set('Access-Control-Allow-Origin', '*')
-  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-  response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-  
-  // Handle OPTIONS (preflight) requests
   if (request.method === 'OPTIONS') {
-    return new NextResponse(null, {
-      status: 204,
-      headers: {
-        ...Object.fromEntries(response.headers),
-        'Content-Length': '0'
-      }
-    })
+    return new NextResponse(null, { status: 204 })
   }
-  
-  return response
+
+  return NextResponse.next()
 }
 
 export const config = {

@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma'
 import {NextResponse} from 'next/server'
 import type {partidos_ronda} from '@prisma/client'
+import {requireAuth} from '@/lib/auth'
 
 const mapRondas: Record<partidos_ronda, string> = {
     Grupos: "Grupos",
@@ -20,15 +21,30 @@ function mapEnumToRondaValor(valor: partidos_ronda | null): string {
 
 
 export async function GET(request: Request) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     try {
         const {searchParams} = new URL(request.url)
         const page = Number(searchParams.get('page') || 1)
         const limit = Number(searchParams.get('limit') || 10)
         const skip = (page - 1) * limit
         const torneoiD = searchParams.get('torneo_id')
+        const q = searchParams.get('q')?.trim()
 
-        // Filtro por categoría
-        const where = torneoiD ? { torneo_id: Number(torneoiD) } : {}
+        // Filtro por torneo y búsqueda por nombre de cualquiera de los dos
+        // jugadores (parcial; la collation de MySQL ignora mayúsculas/acentos).
+        const where = {
+            ...(torneoiD ? { torneo_id: Number(torneoiD) } : {}),
+            ...(q
+                ? {
+                      OR: [
+                          { jugadores_partidos_jugador1_idTojugadores: { nombre: { contains: q } } },
+                          { jugadores_partidos_jugador2_idTojugadores: { nombre: { contains: q } } },
+                      ],
+                  }
+                : {}),
+        }
 
         const [partidos, total] = await Promise.all([
             prisma.partidos.findMany({
@@ -40,6 +56,9 @@ export async function GET(request: Request) {
                     jugadores_partidos_jugador2_idTojugadores: true,
                     jugadores_partidos_ganador_idTojugadores: true,
                     torneos: true
+                },
+                orderBy: {
+                    id: 'desc'
                 }
             }),
             prisma.partidos.count({where})
@@ -56,26 +75,23 @@ export async function GET(request: Request) {
         }));
 
         return NextResponse.json({partidos: partidosFormateados, total});
-        // En la función POST
     } catch (error: any) {
-        // Intenta parsear el body para tener más contexto en el log
-        const body = await request.text().catch(() => 'No se pudo leer el body');
-
-        console.error('Error al crear el partido:', {
+        console.error('Error al obtener los partidos:', {
             message: error.message,
             stack: error.stack,
-            receivedData: body, // Loguea lo que recibiste
         });
 
         return NextResponse.json(
-            {error: "Error al crear partido", details: error.message},
+            {error: "Error al obtener los partidos", details: error.message},
             {status: 500}
         );
     }
-
 }
 
 export async function POST(request: Request) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
     let data;
     try {
         data = await request.json();
@@ -96,16 +112,17 @@ export async function POST(request: Request) {
             return NextResponse.json({error: "Los IDs deben ser números válidos."}, {status: 400});
         }
 
-        await prisma.$executeRawUnsafe(`
+        // Consulta parametrizada: nunca interpolar strings del request en SQL.
+        await prisma.$executeRaw`
       CALL procesar_partido(
         ${j1},
-        ${j2 !== null ? j2 : 'NULL'},
+        ${j2 !== null ? j2 : null},
         ${g},
         ${t},
-        '${ronda}',
-        ${data.tipo_especial ? `'${data.tipo_especial}'` : 'NULL'}
+        ${ronda},
+        ${data.tipo_especial ?? null}
       )
-    `);
+    `;
 
         return NextResponse.json({message: "Partido procesado exitosamente"}, {status: 201});
 
@@ -125,17 +142,4 @@ export async function POST(request: Request) {
             {status: 500}
         );
     }
-}
-
-
-export async function OPTIONS() {
-    return new NextResponse(null, {
-        status: 204,
-        headers: {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-            'Content-Length': '0'
-        }
-    });
 }

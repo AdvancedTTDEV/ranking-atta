@@ -1,17 +1,27 @@
 import prisma from '@/lib/prisma'
 import { NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/auth'
 
 export async function GET(request: Request) {
+  const unauthorized = await requireAuth()
+  if (unauthorized) return unauthorized
+
   try {
     const { searchParams } = new URL(request.url)
     const all = searchParams.get('all') === 'true'
     const page = Number(searchParams.get('page') || 1)
     const limit = Number(searchParams.get('limit') || 10)
     const categoriaId = searchParams.get('categoriaId')
+    const nombre = searchParams.get('nombre')?.trim()
     const skip = (page - 1) * limit
 
-    // Filtro por categoría
-    const where = categoriaId ? { categoria_id: Number(categoriaId) } : {}
+    // Filtro por categoría y búsqueda por nombre (parcial, sin acentos).
+    const where = {
+      ...(categoriaId ? { categoria_id: Number(categoriaId) } : {}),
+      ...(nombre
+        ? { nombre: { contains: nombre } }
+        : {}),
+    }
 
     if (all) {
       const jugadores = await prisma.jugadores.findMany({
