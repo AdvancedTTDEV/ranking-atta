@@ -24,7 +24,7 @@ export default function DashboardPage() {
                             title="Panel de Control"
                             subtitle={`Bienvenido, ${session?.user?.name?.split(' ')[0] ?? 'jugador'}. Resumen del club.`}
                         />
-                        <div className="space-y-3 md:space-y-6">
+                        <div className="dash-compact space-y-3 md:space-y-6">
                             <EstadisticasWrapper />
 
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-6">

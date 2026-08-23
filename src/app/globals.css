@@ -245,6 +245,24 @@ body {
     padding: 1.25rem;
   }
 
+  /* Panel de control más compacto en móvil: menos padding interno de
+     tarjetas y títulos ligeramente menores para que quepa más en pantalla. */
+  @media (max-width: 639px) {
+    .dash-compact .card-body {
+      padding: 0.85rem;
+    }
+    .dash-compact .card-header,
+    .dash-compact .card-header-row {
+      padding: 0.7rem 0.85rem;
+    }
+    .dash-compact .card-title {
+      font-size: 0.9375rem;
+    }
+    .dash-compact .card-subtitle {
+      display: none;
+    }
+  }
+
   .card-body-flush {
     padding: 0;
   }
