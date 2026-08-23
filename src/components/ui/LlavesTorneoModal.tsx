@@ -1082,10 +1082,11 @@ export default function LlavesTorneoModal({
             .vs-sep{margin:0 7px;color:#64748b;font-size:13px;font-weight:normal}
             td.nombres{height:64px}
             td.nombres .nombre-linea{border-bottom:2.5px solid #94a3b8;height:34px;margin:2px 0}
-            .orden-serie{display:flex;flex-wrap:nowrap;align-items:center;gap:4px 10px;margin-top:14px;padding:8px 12px;border:1.5px dashed #94a3b8;border-radius:6px;font-size:12px;color:#334155;white-space:nowrap;overflow:hidden}
-            .orden-serie-titulo{font-weight:bold;text-transform:uppercase;letter-spacing:.5px;font-size:10px;color:#0f172a}
-            .orden-serie-item{white-space:nowrap;font-weight:600}
-            .orden-serie-item b{display:inline-block;background:#f1f5f9;border:1.5px solid #0f172a;border-radius:4px;padding:0 5px;margin-right:4px;font-size:11px;color:#0f172a}
+            /* Lista VERTICAL: un renglón por juego, 1 arriba, 5 abajo. */
+            .orden-serie{display:block;margin-top:12px;padding:7px 12px;border:1.5px dashed #94a3b8;border-radius:6px;font-size:11.5px;color:#334155}
+            .orden-serie-titulo{display:block;font-weight:bold;text-transform:uppercase;letter-spacing:.5px;font-size:10px;color:#0f172a;margin-bottom:2px}
+            .orden-serie-item{display:flex;align-items:center;white-space:nowrap;font-weight:600;padding:1px 0}
+            .orden-serie-item b{flex:0 0 auto;display:inline-block;background:#f1f5f9;border:1.5px solid #0f172a;border-radius:4px;padding:0 5px;margin-right:6px;font-size:10px;color:#0f172a;min-width:14px;text-align:center}
             .pie-nota{font-size:13px;color:#475569;margin-top:20px;line-height:1.45;padding:0 4px}
             .pie-nota .mono{font-family:'Courier New',monospace;font-weight:bold;color:#0f172a}
             .pie-espacio{height:0.6in}

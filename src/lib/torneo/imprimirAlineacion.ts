@@ -163,7 +163,7 @@ const CSS_HOJA = `
     .cabecera-titulo{flex:1;text-align:center}
     .titulo-principal{font-size:24px;font-style:italic;font-weight:bold;letter-spacing:1px}
     .titulo-sub{font-size:12px;color:#475569;margin-top:1px;letter-spacing:.5px}
-    .mitad{flex:1;padding:8px 8px 66px;display:flex;flex-direction:column;position:relative;overflow:hidden}
+    .mitad{flex:1;padding:8px 8px 108px;display:flex;flex-direction:column;position:relative;overflow:hidden}
     .mitad-titulo{font-size:36px;font-weight:bold;text-align:center;letter-spacing:6px;color:#0f172a;margin-bottom:4px}
     table.alineacion{width:100%;border-collapse:collapse;margin-bottom:6px}
     table.alineacion th,table.alineacion td{border:1.8px solid #0f172a;padding:0;font-size:14px;vertical-align:middle}
@@ -185,13 +185,13 @@ const CSS_HOJA = `
     .corte-icono{font-size:11px;letter-spacing:1px;font-style:italic;color:#64748b;white-space:nowrap}
     /* Fija al fondo de CADA mitad (no de la página): aunque la tabla
      * desborde, la tira siempre queda visible dentro del área imprimible. */
-    /* Una sola línea HORIZONTAL: la gente entiende la secuencia 1→5
-     * leída de izquierda a derecha; apilada en vertical no lo capta.
-     * Compacta para que quepa en el ancho de una mitad. */
-    .orden-partidos{display:flex;flex-wrap:nowrap;align-items:center;gap:2px 6px;border-top:1.5px dashed #cbd5e1;position:absolute;left:8px;right:8px;bottom:4px;padding-top:5px;padding-left:2px;padding-right:2px;background:#ffffff;white-space:nowrap}
-    .orden-titulo{font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:.4px;color:#0f172a;margin-right:1px}
-    .orden-item{font-size:10.5px;font-weight:600;color:#334155;white-space:nowrap}
-    .orden-item b{display:inline-block;background:#f1f5f9;border:1.5px solid #0f172a;border-radius:4px;padding:0 4px;margin-right:3px;font-size:9.5px;color:#0f172a}
+    /* Lista VERTICAL: un renglón por juego (1 arriba, 5 abajo), que es
+     * como la gente lee una secuencia. Anclada al fondo de CADA mitad
+     * para que siempre quede visible dentro del área imprimible. */
+    .orden-partidos{position:absolute;left:8px;right:8px;bottom:4px;border-top:1.5px dashed #cbd5e1;padding-top:5px;padding-left:6px;padding-right:4px;background:#ffffff}
+    .orden-titulo{display:block;font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:.5px;color:#0f172a;margin-bottom:2px}
+    .orden-item{display:flex;align-items:center;font-size:10.5px;font-weight:600;color:#334155;white-space:nowrap;padding:1px 0}
+    .orden-item b{flex:0 0 auto;display:inline-block;background:#f1f5f9;border:1.5px solid #0f172a;border-radius:4px;padding:0 4px;margin-right:6px;font-size:9.5px;color:#0f172a;min-width:13px;text-align:center}
     .pie-firmas{padding:6px 8px 4px}
     .firma-bloque{width:60%;margin-left:auto;text-align:center}
     .firma-linea{border-bottom:2px solid #0f172a;height:32px}
