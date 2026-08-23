@@ -13,6 +13,7 @@ export default function Home() {
     const router = useRouter()
     const [loading, setLoading] = useState(false)
     const [intentoAcceso, setIntentoAcceso] = useState(0)
+    const [errorConexion, setErrorConexion] = useState(false)
     const { data: session } = useSession()
     const { resolvedTheme, toggleTheme } = useTheme()
 
@@ -42,7 +43,7 @@ export default function Home() {
             await new Promise((resolve) => setTimeout(resolve, 3000))
         }
 
-        alert('No se pudo conectar con la base de datos. Intenta nuevamente más tarde.')
+        setErrorConexion(true)
         setLoading(false)
     }
 
@@ -168,6 +169,14 @@ export default function Home() {
                                         intento={intentoAcceso}
                                         totalIntentos={5}
                                     />
+                                )}
+                                {errorConexion && !loading && (
+                                    <div
+                                        role="alert"
+                                        className="banner banner-warning text-sm flex items-center gap-2"
+                                    >
+                                        No se pudo conectar con la base de datos. Intenta nuevamente más tarde.
+                                    </div>
                                 )}
                                 <button
                                     type="button"

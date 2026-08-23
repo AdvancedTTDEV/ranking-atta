@@ -12,6 +12,7 @@ import {
     UsersIcon,
 } from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import NavegacionModales, { DestinoModal } from '@/components/ui/NavegacionModales'
 import CargandoPantalla from '@/components/ui/CargandoPantalla'
 import { Select } from '@/components/ui/Select'
@@ -672,9 +673,12 @@ export default function LlavesTorneoModal({
         }
     }
 
+    /** Confirmación ESTILO APP pendiente (reemplaza a los confirm nativos):
+     *  'eliminar' = borrar bracket · 'regenerar' = resembrar R1. */
+    const [confirmacion, setConfirmacion] = useState<null | 'eliminar' | 'regenerar'>(null)
+
     const handleEliminarLlaves = async () => {
         if (!torneo || !categoriaId) return
-        if (!confirm('¿Eliminar el bracket completo? Esta acción no se puede deshacer.')) return
         setIsDeletingLlaves(true)
         try {
             const r = await fetch(`/api/torneos/${torneo.id}/llaves/reordenar?categoriaId=${categoriaId}${esAttaTeams ? `&nivel=${nivel}` : ''}`, {
@@ -702,7 +706,6 @@ export default function LlavesTorneoModal({
     // desbalances) se completan los huecos sobrantes con null (BYE).
     const handleRegenerarSiembra = async () => {
         if (!torneo || !categoriaId) return
-        if (!confirm('¿Regenerar la siembra desde la clasificación de grupos? Se perderán los cambios manuales.')) return
         setIsRegeneratingSiembra(true)
         try {
             const primeraRonda = obtenerPrimeraRonda(partidos)
@@ -1036,6 +1039,10 @@ export default function LlavesTorneoModal({
                 <tbody>${filas}</tbody>
               </table>
 
+              <div class="orden-serie">
+                <span class="orden-serie-titulo">Orden de partidos:</span>
+                ${matchups.map((m, i) => `<span class="orden-serie-item"><b>${i + 1}</b>${escapar(m.etiqueta)}</span>`).join('')}
+              </div>
               <div class="pie-nota">
                 El capitán de cada equipo anota el nombre del jugador que ocupa cada letra
                 (<span class="mono">A·B·C</span> local, <span class="mono">X·Y·Z</span> visitante)
@@ -1075,6 +1082,10 @@ export default function LlavesTorneoModal({
             .vs-sep{margin:0 7px;color:#64748b;font-size:13px;font-weight:normal}
             td.nombres{height:64px}
             td.nombres .nombre-linea{border-bottom:2.5px solid #94a3b8;height:34px;margin:2px 0}
+            .orden-serie{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:14px;padding:8px 12px;border:1.5px dashed #94a3b8;border-radius:6px;font-size:13px;color:#334155}
+            .orden-serie-titulo{font-weight:bold;text-transform:uppercase;letter-spacing:.8px;font-size:11px;color:#0f172a}
+            .orden-serie-item{white-space:nowrap;font-weight:600}
+            .orden-serie-item b{display:inline-block;background:#f1f5f9;border:1.5px solid #0f172a;border-radius:4px;padding:0 5px;margin-right:4px;font-size:11px;color:#0f172a}
             .pie-nota{font-size:13px;color:#475569;margin-top:20px;line-height:1.45;padding:0 4px}
             .pie-nota .mono{font-family:'Courier New',monospace;font-weight:bold;color:#0f172a}
             .pie-espacio{height:0.6in}
@@ -1159,7 +1170,7 @@ export default function LlavesTorneoModal({
                         <>
                             <Button
                                 variant="secondary"
-                                onClick={handleRegenerarSiembra}
+                                onClick={() => setConfirmacion('regenerar')}
                                 isLoading={isRegeneratingSiembra}
                                 leadingIcon={<ArrowPathIcon className="h-4 w-4" />}
                                 title="Reasignar los slots de R1 desde la clasificación de grupos"
@@ -1168,7 +1179,7 @@ export default function LlavesTorneoModal({
                             </Button>
                             <Button
                                 variant="secondary"
-                                onClick={handleEliminarLlaves}
+                                onClick={() => setConfirmacion('eliminar')}
                                 isLoading={isDeletingLlaves}
                                 leadingIcon={<ArrowUturnLeftIcon className="h-4 w-4" />}
                             >
@@ -1281,6 +1292,22 @@ export default function LlavesTorneoModal({
                     />
                 </div>
             )}
+            <ConfirmDialog
+                isOpen={confirmacion !== null}
+                onClose={() => setConfirmacion(null)}
+                onConfirm={() => {
+                    const accion = confirmacion
+                    setConfirmacion(null)
+                    if (accion === 'eliminar') void handleEliminarLlaves()
+                    if (accion === 'regenerar') void handleRegenerarSiembra()
+                }}
+                titulo={confirmacion === 'eliminar' ? 'Eliminar bracket completo' : 'Regenerar siembra'}
+                descripcion={confirmacion === 'eliminar'
+                    ? 'Se borrará el bracket completo de esta categoría. Esta acción no se puede deshacer.'
+                    : 'Se reasignarán los cruces de primera ronda desde la clasificación de grupos. Los cambios manuales se perderán.'}
+                confirmLabel={confirmacion === 'eliminar' ? 'Sí, eliminar' : 'Sí, regenerar'}
+                variant="danger"
+            />
         </Modal>
     )
 }

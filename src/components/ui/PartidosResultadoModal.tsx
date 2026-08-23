@@ -5,6 +5,7 @@ import { toast } from 'react-hot-toast'
 import { ArrowPathIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 
 interface Categoria { id: number; nombre: string }
 interface Jugador { id: number; nombre: string }
@@ -282,15 +283,15 @@ export default function PartidosResultadoModal({
         }
     }
 
+    /** Confirmación ESTILO APP para deshacer la serie (reemplaza al
+     *  window.confirm nativo). */
+    const [confirmarDeshacerSerie, setConfirmarDeshacerSerie] = useState(false)
+
     /** Deshace la SERIE completa por equipos: revierte los sub-partidos
      *  guardados (ranking incluido) y el encuentro vuelve a pendiente. */
     const deshacerSerie = () => {
         if (!seleccionado) return
-        const finalizadas = seleccionado.detalles.filter(d => d.estado === 'FINALIZADO').length
-        if (!window.confirm(
-            `¿Deshacer la serie completa? Se revertirán ${finalizadas} juego${finalizadas === 1 ? '' : 's'} guardado${finalizadas === 1 ? '' : 's'} y su efecto en el ranking. La alineación se conserva.`,
-        )) return
-        void deshacerResultado()
+        setConfirmarDeshacerSerie(true)
     }
 
     const cerrar = () => {
@@ -311,6 +312,7 @@ export default function PartidosResultadoModal({
     // ── Modal para EQUIPOS/ATTA Teams: lista de partidos de la serie ──
     if ((torneo.modalidad === 'EQUIPOS' || torneo.modalidad === 'ATTA_TEAMS') && !detalleSeleccionado) {
         return (
+            <>
             <Modal
                 isOpen
                 onClose={cerrar}
@@ -373,6 +375,22 @@ export default function PartidosResultadoModal({
                     })}
                 </div>
             </Modal>
+            {seleccionado.estado === 'FINALIZADO' && (
+                <ConfirmDialog
+                    isOpen={confirmarDeshacerSerie}
+                    onClose={() => setConfirmarDeshacerSerie(false)}
+                    onConfirm={() => {
+                        setConfirmarDeshacerSerie(false)
+                        void deshacerResultado()
+                    }}
+                    titulo="Deshacer serie completa"
+                    descripcion={`Se revertirán ${seleccionado.detalles.filter(d => d.estado === 'FINALIZADO').length} juegos guardados y su efecto en el ranking. La alineación se conserva.`}
+                    confirmLabel="Sí, deshacer"
+                    variant="danger"
+                    busy={guardando}
+                />
+            )}
+        </>
         )
     }
 
