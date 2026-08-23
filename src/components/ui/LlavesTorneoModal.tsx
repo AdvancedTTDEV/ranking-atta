@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import {
     CheckBadgeIcon,
@@ -290,6 +290,71 @@ export default function LlavesTorneoModal({
     const [serieAbierta, setSerieAbierta] = useState<PartidoCompletoSerie | null>(null)
     const [borradoresSerie, setBorradoresSerie] = useState<Record<number, { sets: { local: number; visitante: number }[] }>>({})
     const [cargandoSerie, setCargandoSerie] = useState(false)
+    /** Caché de series completas precargadas por cruce. La BD remota cobra
+     *  un round-trip por consulta; traer todo al abrir el nivel y servir
+     *  desde memoria hace que «Resultado» sea instantáneo. Se vacía entera
+     *  en cada mutación (alineación guardada, serie cerrada/deshecha). */
+    const cacheSeries = useRef<Map<number, PartidoCompletoSerie>>(new Map())
+    /** Fetches en vuelo, para no duplicar pedidos del mismo cruce. */
+    const seriesEnVuelo = useRef<Map<number, Promise<PartidoCompletoSerie | null>>>(new Map())
+
+    /** Descarga (o deduplica) la serie completa de un cruce y la cachea. */
+    const traerSerie = useCallback((partidoId: number): Promise<PartidoCompletoSerie | null> => {
+        if (!torneo) return Promise.resolve(null)
+        const existente = seriesEnVuelo.current.get(partidoId)
+        if (existente) return existente
+        const promesa = (async () => {
+            try {
+                const r = await fetch(`/api/torneos/${torneo.id}/partidos/${partidoId}`)
+                const d = await r.json()
+                if (!r.ok) throw new Error(d.error || 'No se pudo cargar la serie')
+                cacheSeries.current.set(partidoId, d.partido)
+                return d.partido as PartidoCompletoSerie
+            } catch {
+                return null
+            } finally {
+                seriesEnVuelo.current.delete(partidoId)
+            }
+        })()
+        seriesEnVuelo.current.set(partidoId, promesa)
+        return promesa
+    }, [torneo])
+
+    /** Precarga todas las series con juegos ya creados. Fire-and-forget. */
+    const precargarSeries = useCallback((lista: Partido[]) => {
+        for (const p of lista) {
+            if ((p.detalles?.length ?? 0) > 0 && !cacheSeries.current.has(p.id)) void traerSerie(p.id)
+        }
+    }, [traerSerie])
+
+    /** Vacía la caché de series: obligatorio tras cualquier escritura
+     *  (alineación, sets, deshacer) para no mostrar datos viejos. */
+    const invalidarSeries = () => {
+        cacheSeries.current.clear()
+        seriesEnVuelo.current.clear()
+    }
+
+    /** Abre el modal de serie: sirve de caché si está precargada; si no,
+     *  descarga con indicador visible. */
+    const abrirResultadoLlave = async (partidoId: number) => {
+        const cacheada = cacheSeries.current.get(partidoId)
+        if (cacheada) {
+            setBorradoresSerie({})
+            setSerieAbierta(cacheada)
+            return
+        }
+        setCargandoSerie(true)
+        try {
+            const p = await traerSerie(partidoId)
+            if (!p) throw new Error('No se pudo cargar la serie')
+            setBorradoresSerie({})
+            setSerieAbierta(p)
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Error al cargar la serie')
+        } finally {
+            setCargandoSerie(false)
+        }
+    }
 
     /** Abre el wizard ABC/XYZ para UN partido de llave. Antes asegura
      *  (idempotente, POST /alineacion) que el cruce tenga sus 5 juegos:
@@ -303,6 +368,9 @@ export default function LlavesTorneoModal({
             const r = await fetch(`/api/torneos/${torneo.id}/partidos/${partidoId}/alineacion`, { method: 'POST' })
             const d = await r.json()
             if (!r.ok) throw new Error(d.error || 'No se pudo preparar la serie')
+            // La alineación cambia los jugadores de cada juego: cualquier
+            // serie cacheada de este cruce quedó vieja.
+            invalidarSeries()
             const lista = partidos.map(p => p.id === partidoId ? {
                 ...p,
                 detalles: (d.detalles as Array<{ id: number; orden: number; tipo: string; jugadores: Array<{ jugador_id: number; lado: string; jugadores: { id: number; nombre: string } }> }>).map(det => ({
@@ -321,24 +389,6 @@ export default function LlavesTorneoModal({
             setWizardAlineacionId(partidoId)
         } catch (e) {
             toast.error(e instanceof Error ? e.message : 'Error al preparar la alineación')
-        }
-    }
-
-    /** Abre el modal de serie: pide el partido completo (con sets de cada
-     *  juego) al endpoint individual. */
-    const abrirResultadoLlave = async (partidoId: number) => {
-        if (!torneo) return
-        setCargandoSerie(true)
-        try {
-            const r = await fetch(`/api/torneos/${torneo.id}/partidos/${partidoId}`)
-            const d = await r.json()
-            if (!r.ok) throw new Error(d.error || 'No se pudo cargar la serie')
-            setBorradoresSerie({})
-            setSerieAbierta(d.partido)
-        } catch (e) {
-            toast.error(e instanceof Error ? e.message : 'Error al cargar la serie')
-        } finally {
-            setCargandoSerie(false)
         }
     }
 
@@ -482,6 +532,10 @@ export default function LlavesTorneoModal({
         }
         setSiembra(nuevaSiembra)
         setHasChangesSiembra(false)
+        // Torneos por equipos: precarga en segundo plano la serie completa
+        // de cada cruce que ya tenga juegos, para que «Resultado» abra al
+        // instante (cada GET cuesta varios round-trips a una BD remota).
+        if (esSerieEquipos) void precargarSeries(datos.partidos)
     }
 
     /** GET de llaves (crea el bracket vacío si aún no existe). */
@@ -1439,7 +1493,10 @@ export default function LlavesTorneoModal({
                         }]}
                         modalidad="EQUIPOS"
                         imprimirAlGuardar={false}
-                        onGuardado={() => cargar(undefined, true)}
+                        onGuardado={() => {
+                            invalidarSeries()
+                            cargar(undefined, true)
+                        }}
                     />
                 )
             })()}
@@ -1451,6 +1508,7 @@ export default function LlavesTorneoModal({
                     onClose={() => {
                         setSerieAbierta(null)
                         invalidarCache(nivelRef.current)
+                        invalidarSeries()
                         cargar(undefined, true)
                     }}
                     torneo={{ id: torneo.id, nombre: torneo.nombre, modalidad: torneo.modalidad === 'EQUIPOS' ? 'EQUIPOS' : 'ATTA_TEAMS' }}
@@ -1460,6 +1518,7 @@ export default function LlavesTorneoModal({
                     onBorradoresChange={setBorradoresSerie}
                     onPersist={() => {
                         invalidarCache(nivelRef.current)
+                        invalidarSeries()
                         cargar(undefined, true)
                     }}
                 />
