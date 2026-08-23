@@ -53,6 +53,7 @@ type Partido = {
         id: number
         orden: number
         tipo: 'DOBLES' | 'INDIVIDUAL'
+        estado: string
         jugadores: { jugador_id: number; lado: 'LOCAL' | 'VISITANTE'; jugadores: Jugador }[]
     }>
 }
@@ -297,6 +298,9 @@ export default function LlavesTorneoModal({
     /** Diálogo al intentar cerrar el bracket con juegos sin enviar. */
     const [salirConBorradores, setSalirConBorradores] = useState(false)
     const [cerrandoConEnvio, setCerrandoConEnvio] = useState(false)
+    /** true mientras el lote de juegos está en vuelo: bloquea reenvíos
+     *  (doble clic) y muestra el estado «Procesando…». */
+    const [enviandoLote, setEnviandoLote] = useState(false)
     const [cargandoSerie, setCargandoSerie] = useState(false)
     /** Caché de series completas precargadas por cruce. La BD remota cobra
      *  un round-trip por consulta; traer todo al abrir el nivel y servir
@@ -401,9 +405,20 @@ export default function LlavesTorneoModal({
      *  los cruces. Parchea la UI al instante y refresca por detrás.
      *  Devuelve true si todo quedó guardado. */
     const enviarBorradoresLlave = async (): Promise<boolean> => {
+        // Anti doble-envío: un lote en vuelo bloquea cualquier otro clic.
+        if (enviandoLote) return false
         if (!torneo || Object.keys(borradoresJuegosLlave).length === 0) return true
+        setEnviandoLote(true)
+        try {
+            return await enviarBorradoresLlaveInterno()
+        } finally {
+            setEnviandoLote(false)
+        }
+    }
+
+    const enviarBorradoresLlaveInterno = async (): Promise<boolean> => {
         const { guardados, fallidos } = await enviarBorradoresJuegos({
-            torneoId: torneo.id,
+            torneoId: torneo!.id,
             borradores: borradoresJuegosLlave,
             resolverDetalle: resolverDetalleLlave,
         })
@@ -482,10 +497,11 @@ export default function LlavesTorneoModal({
             invalidarSeries()
             const lista = partidos.map(p => p.id === partidoId ? {
                 ...p,
-                detalles: (d.detalles as Array<{ id: number; orden: number; tipo: string; jugadores: Array<{ jugador_id: number; lado: string; jugadores: { id: number; nombre: string } }> }>).map(det => ({
+                detalles: (d.detalles as Array<{ id: number; orden: number; tipo: string; estado: string; jugadores: Array<{ jugador_id: number; lado: string; jugadores: { id: number; nombre: string } }> }>).map(det => ({
                     id: det.id,
                     orden: det.orden,
                     tipo: det.tipo as 'DOBLES' | 'INDIVIDUAL',
+                    estado: det.estado,
                     jugadores: det.jugadores.map(j => ({
                         jugador_id: j.jugador_id,
                         lado: j.lado as 'LOCAL' | 'VISITANTE',
@@ -1449,9 +1465,13 @@ export default function LlavesTorneoModal({
                         <Button
                             variant="primary"
                             onClick={() => void enviarBorradoresLlave()}
+                            isLoading={enviandoLote}
+                            disabled={enviandoLote}
                             title="Envía juntos todos los juegos que cargaste en borrador, de todos los cruces"
                         >
-                            Enviar {Object.keys(borradoresJuegosLlave).length} juego{Object.keys(borradoresJuegosLlave).length === 1 ? '' : 's'} (lote)
+                            {enviandoLote
+                                ? 'Procesando…'
+                                : `Enviar ${Object.keys(borradoresJuegosLlave).length} juego${Object.keys(borradoresJuegosLlave).length === 1 ? '' : 's'} (lote)`}
                         </Button>
                     )}
                     <Button
@@ -1509,6 +1529,13 @@ export default function LlavesTorneoModal({
                 <div className="banner banner-info mb-4 inline-flex items-center gap-2">
                     <span className="inline-block h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
                     Abriendo la serie del cruce…
+                </div>
+            )}
+
+            {enviandoLote && (
+                <div className="banner banner-info mb-4 inline-flex items-center gap-2">
+                    <span className="inline-block h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                    Procesando el lote de juegos — guardando y actualizando ranking…
                 </div>
             )}
 
@@ -2716,6 +2743,12 @@ function LlaveCard({
     // ¿Ya se guardó una alineación para esta serie? Con que un juego tenga
     // jugadores basta: se asignan los 5 juntos.
     const alineacionHecha = (partido.detalles ?? []).some(d => d.jugadores.length > 0)
+    // Serie EN PROGRESO: hay juegos cargados pero faltan por registrar.
+    // Se pinta en color marca para que el operador ubique de un vistazo
+    // los cruces que siguen pendientes de carga.
+    const detallesSerie = partido.detalles ?? []
+    const jugadosSerie = detallesSerie.filter(d => d.estado === 'FINALIZADO').length
+    const serieEnProgreso = mostrarAccionesSerie && detallesSerie.length > 0 && jugadosSerie < detallesSerie.length
 
     return (
         <div
@@ -2724,12 +2757,13 @@ function LlaveCard({
             className={`relative rounded-md border bg-surface shadow-sm transition-all min-h-16 ${
                 destacado ? 'border-warning shadow-warning/20' :
                 finalizado ? 'border-success' :
-                ganadorBorrador ? 'border-warning' : 'border-line'
+                ganadorBorrador ? 'border-warning' :
+                serieEnProgreso ? 'border-brand bg-brand-soft/20 shadow-brand/10' : 'border-line'
             }`}
         >
             <span
                 className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-md ${
-                    finalizado ? 'bg-success' : ganadorBorrador ? 'bg-warning' : 'bg-line'
+                    finalizado ? 'bg-success' : ganadorBorrador ? 'bg-warning' : serieEnProgreso ? 'bg-brand' : 'bg-line'
                 }`}
             />
             <div className="flex flex-col justify-center min-h-16 pl-3 pr-2 py-1.5">
@@ -2798,9 +2832,15 @@ function LlaveCard({
                         title={partido.detalles?.length === 0
                             ? 'Guarda la alineación primero para crear los juegos de la serie'
                             : 'Registrar los juegos de la serie (al mejor de 5)'}
-                        className="flex-1 px-1 py-1 text-[10px] font-bold rounded border border-brand/40 text-brand hover:bg-brand/10 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+                        className={`flex-1 px-1 py-1 text-[10px] font-bold rounded border transition-colors ${
+                            serieEnProgreso
+                                ? 'border-brand bg-brand text-white hover:bg-brand/90'
+                                : 'border-brand/40 text-brand hover:bg-brand/10'
+                        } disabled:opacity-40 disabled:hover:bg-transparent`}
                     >
-                        Resultado
+                        {serieEnProgreso
+                            ? `Cargar ${jugadosSerie}/${detallesSerie.length}`
+                            : 'Resultado'}
                     </button>
                 </div>
             )}
