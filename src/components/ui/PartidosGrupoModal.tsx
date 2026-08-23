@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
     PrinterIcon,
     ChevronLeftIcon,
@@ -117,6 +117,8 @@ export default function PartidosGrupoModal({
     const [draggingId, setDraggingId] = useState<number | null>(null)
     const [dragOverId, setDragOverId] = useState<number | null>(null)
     const [guardando, setGuardando] = useState(false)
+    // Arrastre por Pointer Events (táctil): el HTML5 DnD no existe en móvil.
+    const punteroRef = useRef<{ pointerId: number; dragId: number } | null>(null)
 
     // Sincronizar ordenLocal con el orden del grupo cada vez que cambia
     // el grupo (o el orden remoto) — clave para cuando navegas entre
@@ -175,16 +177,19 @@ export default function PartidosGrupoModal({
         setDragOverId(null)
     }
 
-    const handleDrop = async (e: React.DragEvent, targetId: number) => {
-        e.preventDefault()
-        if (!permiteReordenar || draggingId === null || draggingId === targetId) {
-            handleDragEnd()
+    /** Mueve `dragId` a la posición de `targetId` y persiste con rollback
+     *  optimista. Común para el drag HTML5 (desktop) y el pointer-drag (táctil). */
+    const moverAntes = async (dragId: number, targetId: number) => {
+        if (!permiteReordenar || dragId === targetId) {
+            setDraggingId(null)
+            setDragOverId(null)
             return
         }
-        const fromIdx = ordenLocal.indexOf(draggingId)
+        const fromIdx = ordenLocal.indexOf(dragId)
         const toIdx = ordenLocal.indexOf(targetId)
         if (fromIdx === -1 || toIdx === -1) {
-            handleDragEnd()
+            setDraggingId(null)
+            setDragOverId(null)
             return
         }
         const siguiente = [...ordenLocal]
@@ -204,6 +209,47 @@ export default function PartidosGrupoModal({
         } finally {
             setGuardando(false)
         }
+    }
+
+    // ── Pointer Events (funciona en táctil y ratón) ──
+    const handlePointerDown = (e: React.PointerEvent<HTMLSpanElement>, partidoId: number, arrastrable: boolean) => {
+        if (!arrastrable || !permiteReordenar) return
+        punteroRef.current = { pointerId: e.pointerId, dragId: partidoId }
+        setDraggingId(partidoId)
+        try {
+            e.currentTarget.setPointerCapture(e.pointerId)
+        } catch {
+            // Sin captura igual funciona: seguimos rastreando por elementFromPoint.
+        }
+    }
+
+    const handlePointerMove = (e: React.PointerEvent) => {
+        const p = punteroRef.current
+        if (!p || e.pointerId !== p.pointerId) return
+        const objetivo = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-partido-id]') as HTMLElement | null
+        if (!objetivo) return
+        const targetId = Number(objetivo.dataset.partidoId)
+        if (targetId && targetId !== dragOverId) setDragOverId(targetId)
+    }
+
+    const handlePointerUp = async (e: React.PointerEvent) => {
+        const p = punteroRef.current
+        if (!p || e.pointerId !== p.pointerId) return
+        punteroRef.current = null
+        const objetivo = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-partido-id]') as HTMLElement | null
+        const targetId = Number(objetivo?.dataset.partidoId ?? 0)
+        const dragId = p.dragId
+        await moverAntes(dragId, targetId || -1)
+    }
+
+    const handleDrop = async (e: React.DragEvent, targetId: number) => {
+        e.preventDefault()
+        if (!permiteReordenar || draggingId === null) {
+            handleDragEnd()
+            return
+        }
+        const dragId = draggingId
+        await moverAntes(dragId, targetId)
     }
 
     return (
@@ -260,6 +306,7 @@ export default function PartidosGrupoModal({
                         <div
                             key={partido.id}
                             data-arraastre
+                            data-partido-id={partido.id}
                             className={`w-full p-3 text-left card-flush overflow-hidden transition-all flex flex-col gap-2 ${
                                 esDragOver
                                     ? 'ring-2 ring-brand bg-brand/5'
@@ -267,7 +314,9 @@ export default function PartidosGrupoModal({
                             } ${arrastrandoEste ? 'opacity-40 scale-[0.99]' : ''}`}
                         >
                             <div className="flex items-stretch gap-2">
-                                {/* Handle de arrastre + número de orden */}
+                                {/* Handle de arrastre + número de orden.
+                                    HTML5 DnD para desktop; Pointer Events para
+                                    táctil (el drag HTML5 no existe en móvil). */}
                                 <span
                                     draggable={esArrastrable}
                                     onDragStart={(e) => {
@@ -279,6 +328,10 @@ export default function PartidosGrupoModal({
                                     onDragOver={(e) => handleDragOver(e, partido.id)}
                                     onDragEnd={handleDragEnd}
                                     onDrop={(e) => handleDrop(e, partido.id)}
+                                    onPointerDown={(e) => handlePointerDown(e, partido.id, esArrastrable)}
+                                    onPointerMove={handlePointerMove}
+                                    onPointerUp={handlePointerUp}
+                                    onPointerCancel={handlePointerUp}
                                     onClick={(e) => e.stopPropagation()}
                                     className={`flex items-center gap-1 shrink-0 self-start ${
                                         esArrastrable ? 'cursor-grab active:cursor-grabbing touch-none' : 'cursor-default'
