@@ -161,7 +161,16 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
         const participanteLocal = partido.participante_local
         const participanteVisitante = partido.participante_visitante
         if (!participanteLocal || !participanteVisitante) return NextResponse.json({ error: 'El partido no tiene ambos participantes' }, { status: 400 })
-        if (partido.estado !== 'FINALIZADO') return NextResponse.json({ error: 'El partido no tiene resultado para deshacer' }, { status: 400 })
+        const esSerieEquipos = partido.torneos.modalidad === 'EQUIPOS' || partido.torneos.modalidad === 'ATTA_TEAMS'
+        // En series por equipos se permite deshacer incluso PARCIAL: con que
+        // un solo sub-partido esté guardado alcanza (p. ej. mandaron el
+        // dobles equivocado y aún no cierran la serie).
+        const detallesJugados = esSerieEquipos
+            ? await prisma.torneo_partido_detalles.count({ where: { partido_programado_id: partido.id, estado: 'FINALIZADO' } })
+            : 0
+        if (partido.estado !== 'FINALIZADO' && (!esSerieEquipos || detallesJugados === 0)) {
+            return NextResponse.json({ error: 'El partido no tiene resultado para deshacer' }, { status: 400 })
+        }
 
         // ── Series por equipos (EQUIPOS / ATTA_TEAMS) ──────────────────
         // Revierte TODOS los sub-partidos guardados: cada individual

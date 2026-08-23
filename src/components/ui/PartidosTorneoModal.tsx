@@ -256,6 +256,9 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
     /** Diálogo al cerrar el modal padre habiendo borradores sin enviar. */
     const [salirConBorradores, setSalirConBorradores] = useState(false)
     const [cerrandoConEnvio, setCerrandoConEnvio] = useState(false)
+    /** Deshacer resultado/serie: cruce confirmado y flag de vuelo. */
+    const [deshacerId, setDeshacerId] = useState<number | null>(null)
+    const [deshaciendo, setDeshaciendo] = useState(false)
     /** ID del grupo cuyo modal de partidos está abierto, o null si ninguno. */
     const [grupoModalId, setGrupoModalId] = useState<number | null>(null)
     /** ID del grupo cuyo modal de resolución de empate está abierto. */
@@ -416,6 +419,31 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
     }
 
     const numeroBorradoresJuegos = Object.keys(borradoresJuegos).length
+
+    /** Deshacer resultado/serie desde la lista de cruces: llama al DELETE
+     *  (revierte ranking vía SP), limpia borradores del cruce y refresca. */
+    const ejecutarDeshacer = async () => {
+        if (!torneo || !deshacerId) return
+        setDeshaciendo(true)
+        try {
+            const r = await fetch(`/api/torneos/${torneo.id}/partidos/${deshacerId}`, { method: 'DELETE' })
+            const data = await r.json().catch(() => ({}))
+            if (!r.ok) { toast.error(data.error || 'No se pudo deshacer el resultado'); return }
+            const cruce = partidos.find(p => p.id === deshacerId)
+            const idsDetalle = new Set((cruce?.detalles ?? []).map(d => d.id))
+            // Esos juegos ya se enviaron una vez: sus borradores locales ya
+            // no representan nada — se limpian.
+            setBorradoresJuegos(prev => Object.fromEntries(Object.entries(prev).filter(([id]) => !idsDetalle.has(Number(id)))))
+            deshacerPartidoLocal(deshacerId)
+            toast.success('Resultado revertido')
+            cargar(true)
+        } catch {
+            toast.error('Error de conexión')
+        } finally {
+            setDeshaciendo(false)
+            setDeshacerId(null)
+        }
+    }
 
     /** Cruce al que pertenece un detalle (para agrupar el parche optimista). */
     const resolverPartidoDeDetalleGrupos = (detalleId: number): number | null => {
@@ -1156,6 +1184,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                         grupo={grupo}
                         borradores={borradores}
                         borradoresJuegos={borradoresJuegos}
+                        onDeshacerResultado={(partidoId) => setDeshacerId(partidoId)}
                         indiceGrupo={indiceGrupo}
                         totalGrupos={partidosPorGrupo.length}
                         onPrevGrupo={() => {
@@ -1373,8 +1402,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
             {/* Diálogo de salida con borradores sin enviar (partidos y/o
                 juegos de serie). */}
             <ConfirmDialog
-                isOpen={salirConBorradores}
-                onClose={() => {
+                isOpen={salirConBorradores}                onClose={() => {
                     setSalirConBorradores(false)
                     // Salir sin guardar: los borradores permanecen en esta
                     // pantalla mientras la página siga abierta.
@@ -1387,6 +1415,19 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                 cancelLabel="Salir sin guardar"
                 variant="primary"
                 busy={cerrandoConEnvio}
+            />
+
+            {/* Confirmación para deshacer el resultado/serie de un cruce
+                desde la lista de partidos del grupo. */}
+            <ConfirmDialog
+                isOpen={deshacerId !== null}
+                onClose={() => setDeshacerId(null)}
+                onConfirm={() => { void ejecutarDeshacer() }}
+                titulo="Deshacer resultado"
+                descripcion="Se revertirán los juegos guardados de este cruce y su efecto en el ranking. La alineación se conserva."
+                confirmLabel="Sí, deshacer"
+                variant="danger"
+                busy={deshaciendo}
             />
         </>
     )

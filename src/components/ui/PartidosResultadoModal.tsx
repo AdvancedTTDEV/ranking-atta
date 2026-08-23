@@ -375,7 +375,8 @@ export default function PartidosResultadoModal({
                                 {numeroBorradoresJuegos} borrador{numeroBorradoresJuegos === 1 ? '' : 'es'} sin enviar
                             </span>
                         )}
-                        {seleccionado.estado === 'FINALIZADO' && (
+                        {(seleccionado.estado === 'FINALIZADO'
+                            || seleccionado.detalles.some(d => d.estado === 'FINALIZADO')) && (
                             <Button
                                 variant="danger"
                                 onClick={deshacerSerie}
@@ -428,7 +429,8 @@ export default function PartidosResultadoModal({
                     })}
                 </div>
             </Modal>
-            {seleccionado.estado === 'FINALIZADO' && (
+            {(seleccionado.estado === 'FINALIZADO'
+                || seleccionado.detalles.some(d => d.estado === 'FINALIZADO')) && (
                 <ConfirmDialog
                     isOpen={confirmarDeshacerSerie}
                     onClose={() => setConfirmarDeshacerSerie(false)}

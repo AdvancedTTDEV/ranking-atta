@@ -8,6 +8,7 @@ import {
     ExclamationTriangleIcon,
     UsersIcon,
     Bars3Icon,
+    ArrowUturnLeftIcon,
 } from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
@@ -89,6 +90,9 @@ interface Props {
     onSelectPartido: (partidoId: number) => void
     /** Abre el wizard de alineación para UN partido (modalidades por equipos). */
     onConfigurarAlineacionPartido?: (partidoId: number) => void
+    /** Pide confirmación para DESHACER el resultado del cruce (serie por
+     *  equipos o partido individual ya guardado). */
+    onDeshacerResultado?: (partidoId: number) => void
     /** Abre el diálogo de impresión de la hoja de partidos del encuentro. */
     onImprimirHojaPartido?: (partidoId: number) => void
     indiceGrupo: number
@@ -108,6 +112,7 @@ export default function PartidosGrupoModal({
     borradoresJuegos,
     onSelectPartido,
     onConfigurarAlineacionPartido,
+    onDeshacerResultado,
     onImprimirHojaPartido,
     indiceGrupo,
     totalGrupos,
@@ -437,6 +442,20 @@ export default function PartidosGrupoModal({
                                     >
                                         <UsersIcon className="h-3 w-3" />
                                         {alineado ? 'Cambiar alineación' : 'Alineación'}
+                                    </button>
+                                )}
+                                {onDeshacerResultado && (finalizado || (partido.detalles ?? []).some(d => d.estado === 'FINALIZADO')) && (
+                                    <button
+                                        type="button"
+                                        title="Deshace el resultado guardado de este cruce y revierte su efecto en el ranking"
+                                        onClick={e => {
+                                            e.stopPropagation()
+                                            onDeshacerResultado(partido.id)
+                                        }}
+                                        className={`shrink-0 text-[0.65rem] hover:underline inline-flex items-center gap-1 text-danger ${onConfigurarAlineacionPartido && !finalizado ? '' : 'ml-auto'}`}
+                                    >
+                                        <ArrowUturnLeftIcon className="h-3 w-3" />
+                                        Deshacer{(partido.detalles ?? []).length > 0 ? ' serie' : ''}
                                     </button>
                                 )}
                             </div>
