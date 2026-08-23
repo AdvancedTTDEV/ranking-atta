@@ -151,10 +151,11 @@ export function construirDocHojaPartidos({
             body{font-family:Arial,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased}
             /* Tamaño carta exacto: 850×1100 px = 8.5×11 pulgadas (100 px/in),
                capturado a pixelRatio 2 → PNG 1700×2200 (200 DPI).
-               Al IMPRIMIR, el papel manda: la hoja se vuelve fluida para
-               que quepa en carta con los márgenes de @page. */
+               Al IMPRIMIR el papel manda: ancho = área imprimible de carta
+               (@page 8mm por lado) y alto mínimo ~papel completo para
+               conservar la proporción vertical y anclar las firmas al pie. */
             .hoja{background:#ffffff;padding:36px 42px;width:850px;height:1100px;display:flex;flex-direction:column}
-            @media print{.hoja{width:100%;height:auto;padding:0}}
+            @media print{.hoja{width:100%;height:auto;min-height:10in;padding:0}}
             .cabecera{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 8px 10px;border-bottom:2.5px solid #0f172a}
             .logo{height:58px;object-fit:contain}
             .titulo-central{flex:1;text-align:center}
