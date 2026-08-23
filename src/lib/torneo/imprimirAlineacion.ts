@@ -58,7 +58,7 @@ function bloqueOrdenPartidos(modalidad: ModalidadHoja): string {
     const items = modalidad === 'DOBLES' ? MATCHUPS_DOBLES : MATCHUPS_EQUIPOS
     return `
         <div class="orden-partidos">
-            <span class="orden-titulo">Orden de partidos</span>
+            <span class="orden-titulo">Orden:</span>
             ${items.map((m, i) => `<span class="orden-item"><b>${i + 1}</b>${escaparHtml(m.etiqueta)}</span>`).join('')}
         </div>
     `
@@ -185,10 +185,13 @@ const CSS_HOJA = `
     .corte-icono{font-size:11px;letter-spacing:1px;font-style:italic;color:#64748b;white-space:nowrap}
     /* Fija al fondo de CADA mitad (no de la página): aunque la tabla
      * desborde, la tira siempre queda visible dentro del área imprimible. */
-    .orden-partidos{display:flex;flex-wrap:wrap;align-items:center;gap:3px 10px;border-top:1.5px dashed #cbd5e1;position:absolute;left:8px;right:8px;bottom:4px;padding-top:6px;padding-left:4px;padding-right:4px;background:#ffffff}
-    .orden-titulo{font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:.8px;color:#0f172a;margin-right:2px}
-    .orden-item{font-size:12.5px;font-weight:600;color:#334155;white-space:nowrap}
-    .orden-item b{display:inline-block;background:#f1f5f9;border:1.5px solid #0f172a;border-radius:4px;padding:0 5px;margin-right:4px;font-size:11px;color:#0f172a}
+    /* Una sola línea HORIZONTAL: la gente entiende la secuencia 1→5
+     * leída de izquierda a derecha; apilada en vertical no lo capta.
+     * Compacta para que quepa en el ancho de una mitad. */
+    .orden-partidos{display:flex;flex-wrap:nowrap;align-items:center;gap:2px 6px;border-top:1.5px dashed #cbd5e1;position:absolute;left:8px;right:8px;bottom:4px;padding-top:5px;padding-left:2px;padding-right:2px;background:#ffffff;white-space:nowrap}
+    .orden-titulo{font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:.4px;color:#0f172a;margin-right:1px}
+    .orden-item{font-size:10.5px;font-weight:600;color:#334155;white-space:nowrap}
+    .orden-item b{display:inline-block;background:#f1f5f9;border:1.5px solid #0f172a;border-radius:4px;padding:0 4px;margin-right:3px;font-size:9.5px;color:#0f172a}
     .pie-firmas{padding:6px 8px 4px}
     .firma-bloque{width:60%;margin-left:auto;text-align:center}
     .firma-linea{border-bottom:2px solid #0f172a;height:32px}

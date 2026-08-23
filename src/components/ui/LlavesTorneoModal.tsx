@@ -1082,8 +1082,8 @@ export default function LlavesTorneoModal({
             .vs-sep{margin:0 7px;color:#64748b;font-size:13px;font-weight:normal}
             td.nombres{height:64px}
             td.nombres .nombre-linea{border-bottom:2.5px solid #94a3b8;height:34px;margin:2px 0}
-            .orden-serie{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:14px;padding:8px 12px;border:1.5px dashed #94a3b8;border-radius:6px;font-size:13px;color:#334155}
-            .orden-serie-titulo{font-weight:bold;text-transform:uppercase;letter-spacing:.8px;font-size:11px;color:#0f172a}
+            .orden-serie{display:flex;flex-wrap:nowrap;align-items:center;gap:4px 10px;margin-top:14px;padding:8px 12px;border:1.5px dashed #94a3b8;border-radius:6px;font-size:12px;color:#334155;white-space:nowrap;overflow:hidden}
+            .orden-serie-titulo{font-weight:bold;text-transform:uppercase;letter-spacing:.5px;font-size:10px;color:#0f172a}
             .orden-serie-item{white-space:nowrap;font-weight:600}
             .orden-serie-item b{display:inline-block;background:#f1f5f9;border:1.5px solid #0f172a;border-radius:4px;padding:0 5px;margin-right:4px;font-size:11px;color:#0f172a}
             .pie-nota{font-size:13px;color:#475569;margin-top:20px;line-height:1.45;padding:0 4px}
