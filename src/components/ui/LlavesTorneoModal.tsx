@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/Button'
 import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
 import { matchupsEstandar } from '@/lib/torneo/matchups'
 import { abrirImpresion, construirDocLlaves, descargarPngDeDoc, prefiereModoOscuro, type RondaLlaveDoc } from '@/lib/documentos-torneo'
+import { arrastrarComoTarjeta } from '@/lib/ui/arrastrar-como-tarjeta'
 type Club = { id: number; nombre: string }
 type Jugador = { nombre: string; clubes?: Club | null }
 type Participante = {
@@ -1645,7 +1646,7 @@ function GrupoPoolCard({
                         <div
                             key={item.participante.id}
                             draggable={!sembrado}
-                            onDragStart={sembrado ? undefined : () => setDraggingSiembra({ tipo: 'pool', participanteId: item.participante.id })}
+                            onDragStart={sembrado ? undefined : (e) => { arrastrarComoTarjeta(e); setDraggingSiembra({ tipo: 'pool', participanteId: item.participante.id }) }}
                             onDragEnd={() => { setDraggingSiembra(null); setDragOverPool(false); setDragOverSiembra(null) }}
                             className={`flex items-center gap-2 px-2.5 py-1.5 text-xs border-t border-line first:border-t-0 ${
                                 sembrado
@@ -1931,7 +1932,7 @@ function SlotFila({
                 if (ocupado) setMenuSiembra({ slot, participanteId: participanteId! })
             }}
             draggable={ocupado}
-            onDragStart={ocupado ? () => setDraggingSiembra({ tipo: 'slot', slot, participanteId: participanteId! }) : undefined}
+            onDragStart={ocupado ? (e) => { arrastrarComoTarjeta(e); setDraggingSiembra({ tipo: 'slot', slot, participanteId: participanteId! }) } : undefined}
             onDragEnd={() => { setDraggingSiembra(null); setDragOverSiembra(null) }}
             className={`flex flex-col text-xs leading-tight py-0.5 rounded-sm transition-colors ${
                 ocupado
@@ -2300,7 +2301,7 @@ function LlaveCard({
                         <div
                             key={i}
                             draggable={!finalizado && !!pid && !soloLectura && !bloqueadoPorEspera}
-                            onDragStart={() => { if (!soloLectura && !bloqueadoPorEspera && pid) setArrastre({ partidoId: partido.id, participanteId: pid }) }}
+                            onDragStart={(e) => { if (!soloLectura && !bloqueadoPorEspera && pid) { arrastrarComoTarjeta(e); setArrastre({ partidoId: partido.id, participanteId: pid }) } }}
                             className={`flex items-center gap-1.5 text-xs leading-tight truncate py-0.5 ${
                                 !soloLectura ? 'cursor-grab' : ''
                             } ${esGanador ? 'font-bold text-success' : 'text-fg'}`}

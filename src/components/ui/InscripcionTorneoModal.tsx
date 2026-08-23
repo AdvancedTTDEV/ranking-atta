@@ -411,7 +411,7 @@ export default function InscripcionTorneoModal({ isOpen, onClose, torneo, onNave
                     </div>
                 )}
 
-                <div className="grid md:grid-cols-[1fr_360px] gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_360px] gap-3 md:gap-4">
                     <div className="card-flush p-4">
                         <div className="mb-3">
                             <h3 className="card-title">

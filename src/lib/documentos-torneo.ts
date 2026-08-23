@@ -8,6 +8,7 @@
  *  - `abrirImpresion`: ventana nueva con @page y print() automático.
  *  - `descargarPngDeDoc`: render offscreen a ancho fijo + html-to-image.
  */
+import { descargarBlob } from './descargar-archivo'
 
 export interface DocImpresion {
     titulo: string
@@ -397,11 +398,26 @@ async function incrustarImagenesComoDataUrl(raiz: HTMLElement): Promise<void> {
  * para documentos de impresión, canvas oscuro (#0B1120) para los docs que
  * espejan el modo oscuro de la app (llaves, grupos).
  */
+/**
+ * Los estilos de los documentos incluyen resets globales (`html,body`,
+ * `body`, `*`) pensados para la ventana de impresión, donde el doc vive
+ * solo. Al renderizar el PNG offscreen el <style> se inyecta en EL
+ * documento vivo: sin este saneo esas reglas filtran a la app y se ve
+ * un «salto» de fuentes/tamaños/fondo durante la captura.
+ */
+function estilosParaPng(css: string): string {
+    return css
+        .replace(/@page[^}]+\}/g, '')
+        .replace(/html\s*,\s*body\s*\{[^}]*\}/g, '')
+        .replace(/(^|\})\s*body\s*\{([^}]*)\}/g, '$1.hoja{$2}')
+        .replace(/(^|\})\s*\*\s*\{[^}]*\}/g, '$1.hoja,.hoja *{box-sizing:border-box}')
+}
+
 export async function descargarPngDeDoc(doc: DocImpresion, anchoPx: number, nombreArchivo: string, fondo: string = '#ffffff'): Promise<void> {
     const contenedor = document.createElement('div')
     contenedor.setAttribute('aria-hidden', 'true')
     contenedor.style.cssText = `position:fixed;left:-20000px;top:0;width:${anchoPx}px;background:${fondo};`
-    contenedor.innerHTML = `<style>${doc.estilos.replace(/@page[^}]+\}/g, '')}</style><div class="hoja">${doc.cuerpo}</div>`
+    contenedor.innerHTML = `<style>${estilosParaPng(doc.estilos)}</style><div class="hoja">${doc.cuerpo}</div>`
     document.body.appendChild(contenedor)
     suprimirRuidoCssRules()
     try {
@@ -410,10 +426,11 @@ export async function descargarPngDeDoc(doc: DocImpresion, anchoPx: number, nomb
         await incrustarImagenesComoDataUrl(objetivo)
         const { toPng } = await import('html-to-image')
         const dataUrl = await toPng(objetivo, { backgroundColor: fondo, pixelRatio: 2, skipFonts: true })
-        const enlace = document.createElement('a')
-        enlace.download = nombreArchivo
-        enlace.href = dataUrl
-        enlace.click()
+        // Las data: URLs no descargan en móvil (iOS Safari bloquea
+        // window.open('data:') y Chrome Android ignora `download` con
+        // URLs gigantes): convertimos a Blob, que funciona en todas.
+        const blob = await (await fetch(dataUrl)).blob()
+        descargarBlob(blob, nombreArchivo)
     } finally {
         contenedor.remove()
     }

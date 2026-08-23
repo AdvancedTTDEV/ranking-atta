@@ -17,6 +17,7 @@ import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
 import { fetchCache, obtenerCache, precargar } from '@/lib/fetchCache'
 import { imprimirAlineacionesBatch as importarEImprimirAlineacionBatch } from '@/lib/torneo/imprimirAlineacion'
 import { MATCHUPS_EQUIPOS, MATCHUPS_DOBLES } from '@/lib/torneo/matchups'
+import { alineacionDesdeDetalles, imprimirHojaPartidos } from '@/lib/torneo/hojaPartidos'
 
 interface Categoria { id: number; nombre: string }
 interface Jugador { id: number; nombre: string }
@@ -787,6 +788,55 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         return [...grupos.entries()].map(([grupoId, cruces]) => ({ grupoId, cruces }))
     }, [modalGeneracion])
 
+    // Mapa jugadorId → nombre de equipo: dice DE QUÉ EQUIPO es cada árbitro
+    // en la hoja de partidos. Se busca entre los miembros de todos los
+    // participantes cargados.
+    const equipoDeJugador = useMemo(() => {
+        const mapa = new Map<number, string>()
+        for (const p of partidos) {
+            const registrar = (part: Participante | null) => {
+                // Cruces «por definir»: aún no tienen participante asignado.
+                if (!part) return
+                part.miembros?.forEach(m => mapa.set(m.jugador_id, nombreParticipante(part)))
+                if (part.jugadores) mapa.set(part.jugadores.id, nombreParticipante(part))
+            }
+            registrar(p.participante_local)
+            registrar(p.participante_visitante)
+        }
+        return mapa
+    }, [partidos])
+
+    /** Abre el diálogo de IMPRESIÓN de la hoja de partidos de UN
+     *  encuentro desde la tarjeta del grupo, sin pasar por el wizard.
+     *  La alineación se lee de los detalles guardados (convención
+     *  LOCAL = ABC); si no hay alineación, guía al operador a
+     *  configurarla primero. */
+    const imprimirHojaDePartido = (partidoId: number) => {
+        const partido = partidos.find(p => p.id === partidoId)
+        if (!torneo || !partido) return
+        if (!(torneo.modalidad === 'DOBLES' || torneo.modalidad === 'EQUIPOS' || torneo.modalidad === 'ATTA_TEAMS')) return
+        const modalidadWizard = torneo.modalidad === 'DOBLES' ? ('DOBLES' as const) : ('EQUIPOS' as const)
+        const alineacion = alineacionDesdeDetalles(partido.detalles, modalidadWizard)
+        if (!alineacion) {
+            toast.error('Este encuentro no tiene alineación guardada — entra a «Alineación» para configurarla')
+            return
+        }
+        const ok = imprimirHojaPartidos({
+            torneoNombre: torneo.nombre,
+            categoria: categorias.find(c => c.id.toString() === categoriaId)?.nombre || '',
+            modalidad: modalidadWizard,
+            encuentroOrden: partido.orden,
+            nombreEquipoAbc: nombreParticipante(partido.participante_local),
+            nombreEquipoXyz: nombreParticipante(partido.participante_visitante),
+            alineacion,
+            arbitro: partido.arbitro
+                ? { nombre: partido.arbitro.nombre, equipo: equipoDeJugador.get(partido.arbitro.id) ?? null }
+                : null,
+        })
+        if (ok) toast.success('Hoja enviada a impresión')
+        else toast.error('El navegador bloqueó la ventana de impresión — permite las ventanas emergentes para este sitio')
+    }
+
     if (!isOpen || !torneo) return null
 
     const numeroBorradores = Object.keys(borradores).length
@@ -995,6 +1045,37 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                                 ? (partidoId) => setWizardPartidoId(partidoId)
                                 : undefined
                         }
+                        onImprimirHojaPartido={
+                            torneo?.modalidad === 'DOBLES' || torneo?.modalidad === 'EQUIPOS' || torneo?.modalidad === 'ATTA_TEAMS'
+                                ? imprimirHojaDePartido
+                                : undefined
+                        }
+                        onReordenar={async (nuevoOrdenIds) => {
+                            if (!torneo || !categoriaId) return false
+                            try {
+                                const res = await fetch(`/api/torneos/${torneo.id}/partidos/reordenar`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        categoriaId: Number(categoriaId),
+                                        grupoId: grupo.id,
+                                        orden: nuevoOrdenIds,
+                                    }),
+                                })
+                                if (!res.ok) {
+                                    const data = await res.json().catch(() => ({}))
+                                    toast.error(data.error || 'No se pudo reordenar')
+                                    return false
+                                }
+                                toast.success('Orden guardado')
+                                // Refresca para confirmar el orden desde el backend
+                                await cargar(true)
+                                return true
+                            } catch {
+                                toast.error('Error de red al reordenar')
+                                return false
+                            }
+                        }}
                     />
                 )
             })()}
@@ -1129,6 +1210,12 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                         partidos={[{
                             id: partido.id,
                             orden: partido.orden,
+                            arbitro: partido.arbitro
+                                ? {
+                                    nombre: partido.arbitro.nombre,
+                                    equipo: equipoDeJugador.get(partido.arbitro.id) ?? null,
+                                }
+                                : null,
                             detalles: partido.detalles.map(d => ({
                                 id: d.id,
                                 orden: d.orden,

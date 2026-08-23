@@ -3,11 +3,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
     ArrowLeftIcon, ArrowRightIcon, CheckCircleIcon, MagnifyingGlassIcon, XMarkIcon, UsersIcon, TrophyIcon,
+    PrinterIcon, ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { toast } from 'react-hot-toast'
+import {
+    imprimirHojaPartidos,
+    type LetrasHoja, type JugadorHoja,
+} from '@/lib/torneo/hojaPartidos'
 import {
     LETRAS_LOCALES, LETRAS_VISITANTES,
     matchupsEstandar, resolverMatchup,
@@ -39,6 +44,9 @@ interface PartidoLite {
      *  los usa para colocar cada jugador en su lado correcto. */
     participante_local_id?: number | null
     participante_visitante_id?: number | null
+    /** Árbitro asignado al encuentro y el equipo al que pertenece.
+     *  Solo se usa para la hoja de partidos descargable. */
+    arbitro?: { nombre: string; equipo: string | null } | null
     detalles: DetalleLite[]
 }
 
@@ -88,6 +96,10 @@ export default function EncuentroEquiposWizardModal({
     /** Asignación de jugadores por letra, para el equipo ABC y XYZ. */
     const [asignacion, setAsignacion] = useState<Asignacion>({ abc: {}, xyz: {} })
     const [guardando, setGuardando] = useState(false)
+    /** true = la impresión automática tras guardar falló (popup
+     *  bloqueado) y el wizard permanece abierto para reintentarla con
+     *  el botón manual. */
+    const [impresionFallida, setImpresionFallida] = useState(false)
 
     // Solo 3 letras por lado (A/B/C y X/Y/Z). Esto es independiente de la
     // modalidad: DOBLES usa 2 de las 3 letras y EQUIPOS las usa todas.
@@ -99,6 +111,7 @@ export default function EncuentroEquiposWizardModal({
     useEffect(() => {
         if (!isOpen) return
         setStep('seleccion-lado')
+        setImpresionFallida(false)
         // La elección ABC/XYZ es SIEMPRE explícita: el operador decide
         // qué equipo lleva las letras A/B/C según las hojas de los
         // capitanes. No pre-seleccionamos nada.
@@ -260,6 +273,25 @@ export default function EncuentroEquiposWizardModal({
                     : `Alineación guardada para ${aplicables.length} partidos del grupo`
                         + (omitidos > 0 ? ` (${omitidos} de otros cruces omitidos)` : ''),
             )
+            // Último paso: el diálogo de impresión de la hoja se abre
+            // SOLO. Si el navegador bloquea la ventana, NO cerramos el
+            // wizard: queda un aviso y el botón «Imprimir hoja de
+            // partidos» a la vista para reintentar antes de salir.
+            try {
+                if (!generarHojaPartidos()) {
+                    setImpresionFallida(true)
+                    toast.error('La alineación se guardó, pero el navegador bloqueó la impresión — usa «Imprimir hoja de partidos»')
+                    onGuardado?.()
+                    return
+                }
+                toast.success('Hoja enviada a impresión')
+            } catch (error) {
+                console.error('Impresión automática de la hoja falló:', error)
+                toast.error('La alineación se guardó, pero la hoja no se pudo imprimir — usa «Imprimir hoja de partidos»')
+                setImpresionFallida(true)
+                onGuardado?.()
+                return
+            }
             // Cerramos el wizard al guardar: el feedback es el toast + la
             // lista actualizada con los estados de alineación al día.
             onGuardado?.()
@@ -268,6 +300,61 @@ export default function EncuentroEquiposWizardModal({
             toast.error(error instanceof Error ? error.message : 'Error al guardar')
         } finally {
             setGuardando(false)
+        }
+    }
+
+    /**
+     * Abre el **diálogo de impresión** con la Hoja de partidos del
+     * encuentro (carta vertical): los juegos a disputar con la etiqueta
+     * del cruce («A vs X», «B+C vs Y+Z»), los nombres reales por lado y
+     * el árbitro de cada encuentro con su equipo. Usa el estado ACTUAL
+     * del wizard: no requiere haber guardado.
+     * Devuelve false si el navegador bloqueó la ventana de impresión.
+     */
+    const generarHojaPartidos = (): boolean => {
+        if (!ladoAbc) throw new Error('Sin lado ABC elegido')
+        const equipoAbc = ladoAbc === 'visitante' ? equipos.visitante : equipos.local
+        const equipoXyz = ladoAbc === 'visitante' ? equipos.local : equipos.visitante
+        const poolAbc = (ladoAbc === 'visitante' ? equipos.visitante : equipos.local).miembros.map(m => m.jugadores)
+        const poolXyz = (ladoAbc === 'visitante' ? equipos.local : equipos.visitante).miembros.map(m => m.jugadores)
+        // Letras → jugador real usando el estado ACTUAL del wizard.
+        const aJugador = (j?: Jugador): JugadorHoja | undefined => j ? { id: j.id, nombre: j.nombre } : undefined
+        const abc: LetrasHoja['abc'] = {}
+        const xyz: LetrasHoja['xyz'] = {}
+        for (const letra of LETRAS_LOC) {
+            const id = asignacion.abc[letra]
+            const j = id ? poolAbc.find(x => x.id === id) : undefined
+            if (j) abc[letra] = aJugador(j)
+        }
+        for (const letra of LETRAS_VIS) {
+            const id = asignacion.xyz[letra]
+            const j = id ? poolXyz.find(x => x.id === id) : undefined
+            if (j) xyz[letra] = aJugador(j)
+        }
+        return imprimirHojaPartidos({
+            torneoNombre: torneo.nombre,
+            categoria,
+            modalidad,
+            encuentroOrden: partidos[0]?.orden,
+            nombreEquipoAbc: nombreEquipo(equipoAbc),
+            nombreEquipoXyz: nombreEquipo(equipoXyz),
+            alineacion: { abc, xyz },
+            arbitro: partidos[0]?.arbitro ?? null,
+        })
+    }
+
+    /** Handler del botón manual: abre el diálogo de impresión con la
+     *  hoja, como respaldo si la automática falló o para imprimir otra
+     *  copia antes de salir. */
+    const imprimirHoja = () => {
+        try {
+            if (!generarHojaPartidos()) {
+                toast.error('El navegador bloqueó la ventana de impresión — permite las ventanas emergentes para este sitio')
+                return
+            }
+        } catch (error) {
+            console.error('Error al imprimir la hoja de partidos:', error)
+            toast.error('No se pudo generar la hoja')
         }
     }
 
@@ -317,6 +404,14 @@ export default function EncuentroEquiposWizardModal({
                         {step === 'revisar-matchups' && (
                             <>
                                 <Button
+                                    variant="secondary"
+                                    onClick={imprimirHoja}
+                                    leadingIcon={<PrinterIcon className="h-4 w-4" />}
+                                    title="Abre el diálogo de impresión con los juegos a disputar, los nombres por lado y el árbitro de cada encuentro"
+                                >
+                                    Imprimir hoja de partidos
+                                </Button>
+                                <Button
                                     variant="primary"
                                     onClick={guardarAlineacion}
                                     isLoading={guardando}
@@ -331,6 +426,15 @@ export default function EncuentroEquiposWizardModal({
             }
         >
             <Stepper step={step} />
+            {step === 'revisar-matchups' && impresionFallida && (
+                <div className="mt-4 banner banner-warning text-xs flex items-center gap-2">
+                    <ExclamationTriangleIcon className="h-4 w-4 text-warning shrink-0" />
+                    <span>
+                        La alineación <b>se guardó</b>, pero la hoja no se pudo imprimir
+                        automáticamente. Usa el botón <b>«Imprimir hoja de partidos»</b> para intentarlo de nuevo.
+                    </span>
+                </div>
+            )}
             <div className="mt-5 min-h-[320px]">
                 {step === 'seleccion-lado' && (
                     <PasoSeleccionLado

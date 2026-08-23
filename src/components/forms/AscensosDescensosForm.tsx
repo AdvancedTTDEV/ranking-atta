@@ -2,7 +2,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { toast } from 'react-hot-toast'
 import { fetchCache } from '@/lib/fetchCache'
-import Modal from '@/components/ui/Modal'
 import PlayerSelector from '@/components/ui/PlayerSelector'
 import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Select'
@@ -228,6 +227,61 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
 
     return (
         <>
+            {/* La confirmación REEMPLAZA el contenido: queda visible de inmediato
+                sin depender de la posición del scroll (clave en móvil). */}
+            {showConfirmation ? (
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                        <h4 className="text-sm font-semibold text-fg">
+                            Confirmar {esAscenso ? 'ascensos' : 'descensos'}
+                        </h4>
+                        <button
+                            type="button"
+                            onClick={() => setShowConfirmation(false)}
+                            className="btn btn-ghost btn-icon"
+                            aria-label="Cerrar confirmación"
+                            disabled={isSubmitting}
+                        >
+                            ✕
+                        </button>
+                    </div>
+                    <p className="text-sm text-fg-muted">Estás a punto de realizar los siguientes cambios:</p>
+                    <div className="card-flush p-2 max-h-[38vh] overflow-y-auto scrollbar-thin">
+                        <ul className="divide-y divide-line">
+                            {selectedJugadores.map(jugador => {
+                                const { actual, nueva } = getCategoriaChange(jugador)
+                                return (
+                                    <li key={jugador.id} className="flex justify-between items-center py-2 px-2 gap-2">
+                                        <span className="font-medium text-fg truncate">{jugador.nombre}</span>
+                                        <div className="flex items-center gap-2 text-sm shrink-0">
+                                            <span className="text-fg-muted">{actual}</span>
+                                            <span className="text-fg-muted">→</span>
+                                            <span className="font-semibold text-fg">{nueva}</span>
+                                        </div>
+                                    </li>
+                                )
+                            })}
+                        </ul>
+                    </div>
+                    <div className="banner banner-warning">
+                        Esta acción no se puede deshacer. ¿Desea continuar?
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <Button type="button" variant="secondary" onClick={() => setShowConfirmation(false)} disabled={isSubmitting}>
+                            Cancelar
+                        </Button>
+                        <Button
+                            type="button"
+                            variant={esAscenso ? 'success' : 'danger'}
+                            onClick={handleSubmit}
+                            isLoading={isSubmitting}
+                        >
+                            {isSubmitting ? 'Procesando…' : 'Confirmar cambios'}
+                        </Button>
+                    </div>
+                </div>
+            ) : (
+            <>
             {/* Selector de categoría */}
             <div className="flex flex-wrap items-center gap-3 mb-4 pb-4 border-b border-line">
                 <Select
@@ -245,15 +299,15 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
                 </p>
             </div>
 
-            {/* Dos columnas */}
-            <div className="flex gap-4 h-[50vh]">
+            {/* Dos columnas en desktop, stacked en mobile */}
+            <div className="flex flex-col md:flex-row md:gap-4 md:h-[50vh] gap-3">
 
                 {/* Izquierda — buscador y checkboxes */}
-                <div className="flex-1 flex flex-col card overflow-hidden">
+                <div className="flex-1 flex flex-col card overflow-hidden min-h-[180px] max-h-[42vh] md:min-h-0 md:max-h-none">
                     <div className="card-header-row bg-surface-2">
                         <h3 className="text-sm font-semibold text-fg">Jugadores disponibles</h3>
                     </div>
-                    <div className="flex-1 overflow-y-auto p-4">
+                    <div className="flex-1 overflow-y-auto p-3 sm:p-4 scrollbar-thin overscroll-contain">
                         <PlayerSelector
                             jugadores={jugadores}
                             selectedJugadores={selectedJugadores}
@@ -265,7 +319,7 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
                 </div>
 
                 {/* Derecha — seleccionados */}
-                <div className="w-72 flex flex-col card overflow-hidden shrink-0">
+                <div className="flex flex-col card overflow-hidden shrink-0 max-h-[34vh] md:w-72 md:max-h-[40vh]">
                     <div className="card-header-row bg-surface-2">
                         <h3 className="text-sm font-semibold text-fg flex items-center gap-2">
                             {esAscenso ? 'A ascender' : 'A descender'}
@@ -338,50 +392,8 @@ export default function GestionAscensoDescenso({ tipo, onClose }: Props) {
                     </Button>
                 </div>
             </div>
-
-            {/* Modal de confirmación */}
-            <Modal
-                isOpen={showConfirmation}
-                onClose={() => setShowConfirmation(false)}
-                title={`Confirmar ${esAscenso ? 'ascensos' : 'descensos'}`}
-            >
-                <div className="mb-6">
-                    <p className="mb-4 text-fg-muted">Estás a punto de realizar los siguientes cambios:</p>
-                    <div className="card-flush p-2 max-h-60 overflow-y-auto scrollbar-thin">
-                        <ul className="divide-y divide-line">
-                            {selectedJugadores.map(jugador => {
-                                const { actual, nueva } = getCategoriaChange(jugador)
-                                return (
-                                    <li key={jugador.id} className="flex justify-between items-center py-2 px-2">
-                                        <span className="font-medium text-fg">{jugador.nombre}</span>
-                                        <div className="flex items-center gap-2 text-sm">
-                                            <span className="text-fg-muted">{actual}</span>
-                                            <span className="text-fg-muted">→</span>
-                                            <span className="font-semibold text-fg">{nueva}</span>
-                                        </div>
-                                    </li>
-                                )
-                            })}
-                        </ul>
-                    </div>
-                    <div className="banner banner-warning mt-4">
-                        Esta acción no se puede deshacer. ¿Desea continuar?
-                    </div>
-                </div>
-                <div className="flex justify-end gap-2">
-                    <Button type="button" variant="secondary" onClick={() => setShowConfirmation(false)} disabled={isSubmitting}>
-                        Cancelar
-                    </Button>
-                    <Button
-                        type="button"
-                        variant={esAscenso ? 'success' : 'danger'}
-                        onClick={handleSubmit}
-                        isLoading={isSubmitting}
-                    >
-                        {isSubmitting ? 'Procesando…' : 'Confirmar cambios'}
-                    </Button>
-                </div>
-            </Modal>
+            </>
+            )}
         </>
     )
 }

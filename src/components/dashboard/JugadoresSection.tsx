@@ -277,6 +277,7 @@ export default function JugadoresSection({ className = '' }: { className?: strin
         <Section
             title="Jugadores"
             subtitle="Administra la lista de jugadores del club"
+            compact
             className={className}
             actions={
                 !showForm && (

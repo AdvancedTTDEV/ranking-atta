@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
 import { abrirImpresion, construirDocGrupos, descargarPngDeDoc, prefiereModoOscuro } from '@/lib/documentos-torneo'
+import { arrastrarComoTarjeta } from '@/lib/ui/arrastrar-como-tarjeta'
 
 interface Club { id: number; nombre: string }
 interface Jugador { id: number; nombre: string; elo: number | null; clubes?: Club; categorias?: { nombre: string } }
@@ -761,7 +762,7 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                                         <button
                                             type="button"
                                             draggable
-                                            onDragStart={() => setDraggingFromPool(p.id)}
+                                            onDragStart={(e) => { arrastrarComoTarjeta(e); setDraggingFromPool(p.id) }}
                                             onDragEnd={handleDragEnd}
                                             onClick={() => togglePoolMenu(p.id)}
                                             className="flex items-center gap-1.5 bg-subtle hover:bg-surface-2 border border-line rounded-full pl-3 pr-2 py-1.5 text-sm font-semibold text-fg cursor-grab active:cursor-grabbing transition-colors"
@@ -884,7 +885,7 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                                                         <li
                                                             key={gp.id}
                                                             draggable
-                                                            onDragStart={() => handleDragStart(grupo.id, gp.id)}
+                                                            onDragStart={(e) => { arrastrarComoTarjeta(e); handleDragStart(grupo.id, gp.id) }}
                                                             onDragOver={(e) => handleDragOver(e, grupo.id, gp.id)}
                                                             onDrop={(e) => { e.stopPropagation(); handleDrop(grupo.id, gp.id) }}
                                                             onDragEnd={handleDragEnd}

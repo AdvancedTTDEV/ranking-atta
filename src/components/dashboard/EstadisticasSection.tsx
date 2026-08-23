@@ -129,15 +129,15 @@ export default function EstadisticasSection({ className = '' }) {
 
     if (loading) {
         return (
-            <Section title="Estadísticas" subtitle="Resumen general del club" className={className}>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <Section title="Estadísticas" subtitle="Resumen general del club" compact className={className}>
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
                     {[...Array(3)].map((_, i) => (
-                        <div key={i} className="card card-body h-28 animate-pulse-soft bg-subtle" />
+                        <div key={i} className="card card-body h-20 sm:h-28 animate-pulse-soft bg-subtle" />
                     ))}
                 </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-                    <div className="card h-80 animate-pulse-soft bg-subtle" />
-                    <div className="card h-80 animate-pulse-soft bg-subtle" />
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-4">
+                    <div className="card h-56 sm:h-80 animate-pulse-soft bg-subtle" />
+                    <div className="card h-56 sm:h-80 animate-pulse-soft bg-subtle" />
                 </div>
             </Section>
         )
@@ -147,38 +147,42 @@ export default function EstadisticasSection({ className = '' }) {
         <Section
             title="Estadísticas"
             subtitle="Resumen general del club"
+            compact
             className={className}
         >
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
                 <StatTile
                     label="Jugadores"
                     value={stats.totalJugadores}
-                    icon={<UserGroupIcon className="h-5 w-5" />}
+                    icon={<UserGroupIcon className="h-4 w-4 sm:h-5 sm:w-5" />}
                     accent="brand"
                     href="/dashboard/jugadores"
+                    size="sm"
                 />
                 <StatTile
                     label="Torneos"
                     value={stats.totalTorneos}
-                    icon={<TrophyIcon className="h-5 w-5" />}
+                    icon={<TrophyIcon className="h-4 w-4 sm:h-5 sm:w-5" />}
                     accent="success"
                     href="/dashboard/torneos"
+                    size="sm"
                 />
                 <StatTile
                     label="Partidos"
                     value={stats.totalPartidos}
-                    icon={<DocumentTextIcon className="h-5 w-5" />}
+                    icon={<DocumentTextIcon className="h-4 w-4 sm:h-5 sm:w-5" />}
                     accent="info"
                     href="/dashboard/partidos"
+                    size="sm"
                 />
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6">
-                <div className="card card-body">
-                    <h3 className="text-sm font-semibold text-fg mb-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-4">
+                <div className="card card-body !p-3 sm:!p-5">
+                    <h3 className="text-sm font-semibold text-fg mb-3 sm:mb-4">
                         Puntos promedio por categoría
                     </h3>
-                    <div className="h-72">
+                    <div className="h-48 sm:h-72">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart
                                 data={stats.eloPorCategoria}
@@ -209,11 +213,11 @@ export default function EstadisticasSection({ className = '' }) {
                     </div>
                 </div>
 
-                <div className="card card-body">
-                    <h3 className="text-sm font-semibold text-fg mb-4">
+                <div className="card card-body !p-3 sm:!p-5">
+                    <h3 className="text-sm font-semibold text-fg mb-3 sm:mb-4">
                         Jugadores por club
                     </h3>
-                    <div className="h-72">
+                    <div className="h-48 sm:h-72">
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
                                 <Pie
