@@ -388,33 +388,56 @@ export default function LlavesTorneoModal({
         onClose()
     }
 
-    /** Opción «Guardar y salir» del diálogo: envía todo y cierra solo si
-     *  no hubo fallidos (los fallidos quedan como borrador para revisar). */
+    /** Cruce al que pertenece un detalle (para agrupar el parche optimista). */
+    const resolverPartidoDeDetalleLlave = (detalleId: number): number | null => {
+        const fuentes = [...cacheSeries.current.values(), ...partidos]
+        for (const p of fuentes) {
+            if (p.detalles?.some(d => d.id === detalleId)) return p.id
+        }
+        return null
+    }
+
+    /** Envía el LOTE completo de juegos en borrador acumulados de todos
+     *  los cruces. Parchea la UI al instante y refresca por detrás.
+     *  Devuelve true si todo quedó guardado. */
+    const enviarBorradoresLlave = async (): Promise<boolean> => {
+        if (!torneo || Object.keys(borradoresJuegosLlave).length === 0) return true
+        const { guardados, fallidos } = await enviarBorradoresJuegos({
+            torneoId: torneo.id,
+            borradores: borradoresJuegosLlave,
+            resolverDetalle: resolverDetalleLlave,
+        })
+        if (guardados.length > 0) {
+            // Parche optimista agrupado por cruce, ANTES de limpiar los
+            // borradores (el parche lee los sets desde ahí).
+            const porPartido = new Map<number, number[]>()
+            for (const id of guardados) {
+                const pid = resolverPartidoDeDetalleLlave(id)
+                if (pid == null) continue
+                porPartido.set(pid, [...(porPartido.get(pid) ?? []), id])
+            }
+            for (const [pid, ids] of porPartido) parcheJuegosEnviados(pid, ids)
+            setBorradoresJuegosLlave(Object.fromEntries(
+                Object.entries(borradoresJuegosLlave).filter(([id]) => !guardados.includes(Number(id)))
+            ))
+            invalidarCache(nivelRef.current)
+            invalidarSeries()
+            cargar(undefined, true)
+            toast.success(`${guardados.length} juego${guardados.length === 1 ? '' : 's'} guardado${guardados.length === 1 ? '' : 's'} — ranking actualizado`)
+        }
+        if (fallidos.length > 0) {
+            toast.error(`${fallidos.length} juego${fallidos.length === 1 ? '' : 's'} con error: ${fallidos[0].motivo}. Quedan en borrador.`)
+        }
+        return fallidos.length === 0
+    }
+
+    /** Opción «Guardar y salir» del diálogo de salida. */
     const cerrarGuardandoBorradores = async () => {
-        if (!torneo) return onClose()
         setCerrandoConEnvio(true)
         try {
-            const { guardados, fallidos } = await enviarBorradoresJuegos({
-                torneoId: torneo.id,
-                borradores: borradoresJuegosLlave,
-                resolverDetalle: resolverDetalleLlave,
-            })
-            if (guardados.length > 0) {
-                setBorradoresJuegosLlave(Object.fromEntries(
-                    Object.entries(borradoresJuegosLlave).filter(([id]) => !guardados.includes(Number(id)))
-                ))
-                invalidarCache(nivelRef.current)
-                invalidarSeries()
-                cargar(undefined, true)
-                toast.success(`${guardados.length} juego${guardados.length === 1 ? '' : 's'} guardado${guardados.length === 1 ? '' : 's'} — ranking actualizado`)
-            }
-            if (fallidos.length === 0) {
-                setSalirConBorradores(false)
-                onClose()
-            } else {
-                setSalirConBorradores(false)
-                toast.error(`${fallidos.length} juego${fallidos.length === 1 ? '' : 's'} con error: ${fallidos[0].motivo}. Quedan en borrador.`)
-            }
+            const ok = await enviarBorradoresLlave()
+            setSalirConBorradores(false)
+            if (ok) onClose()
         } finally {
             setCerrandoConEnvio(false)
         }
@@ -1422,6 +1445,15 @@ export default function LlavesTorneoModal({
                     >
                         {confirmando ? 'Confirmando y actualizando ELO...' : `Confirmar ${numBorradores || ''} resultado(s)`}
                     </Button>
+                    {Object.keys(borradoresJuegosLlave).length > 0 && (
+                        <Button
+                            variant="primary"
+                            onClick={() => void enviarBorradoresLlave()}
+                            title="Envía juntos todos los juegos que cargaste en borrador, de todos los cruces"
+                        >
+                            Enviar {Object.keys(borradoresJuegosLlave).length} juego{Object.keys(borradoresJuegosLlave).length === 1 ? '' : 's'} (lote)
+                        </Button>
+                    )}
                     <Button
                         variant="secondary"
                         onClick={handleDescargar}
@@ -1604,7 +1636,6 @@ export default function LlavesTorneoModal({
                     onBorradoresChange={setBorradoresSerie}
                     borradoresJuegos={borradoresJuegosLlave}
                     onBorradoresJuegosChange={setBorradoresJuegosLlave}
-                    onJuegosEnviados={parcheJuegosEnviados}
                     onPersist={() => {
                         invalidarCache(nivelRef.current)
                         invalidarSeries()

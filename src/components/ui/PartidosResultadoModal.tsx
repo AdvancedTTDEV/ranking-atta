@@ -6,7 +6,7 @@ import { ArrowPathIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outl
 import Modal from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
-import { enviarBorradoresJuegos, type BorradorJuego } from '@/lib/torneo/borradores-juegos'
+import type { BorradorJuego } from '@/lib/torneo/borradores-juegos'
 
 interface Categoria { id: number; nombre: string }
 interface Jugador { id: number; nombre: string }
@@ -61,14 +61,10 @@ interface Props {
      *  detalles de serie) como pendiente al instante, sin esperar el fetch. */
     onDeshacerLocal?: (partidoId: number) => void
     /** Borradores de JUEGOS de serie (clave = detalle id), controlados por
-     *  el padre para que sobrevivan al cierre. Si no se pasan, se usan
-     *  internos (mismo comportamiento, sin persistencia entre aperturas). */
+     *  el padre para que sobrevivan al cierre y se envíen en UN solo lote
+     *  desde la vista principal. Si no se pasan, se usan internos. */
     borradoresJuegos?: Record<number, BorradorJuego>
     onBorradoresJuegosChange?: (siguiente: Record<number, BorradorJuego>) => void
-    /** Parche optimista tras «Enviar»: el padre marca esos juegos como
-     *  FINALIZADO con sus sets, para que la UI nunca quede desactualizada
-     *  mientras llega el refetch completo. */
-    onJuegosEnviados?: (partidoId: number, detalleIds: number[]) => void
     onPersist?: () => void
 }
 
@@ -89,7 +85,6 @@ export default function PartidosResultadoModal({
     onDeshacerLocal,
     borradoresJuegos: borradoresJuegosProp,
     onBorradoresJuegosChange,
-    onJuegosEnviados,
     onPersist,
 }: Props) {
     const [seleccionadoId, setSeleccionadoId] = useState<number>(partidoInicialId)
@@ -109,9 +104,6 @@ export default function PartidosResultadoModal({
         else setBorradoresJuegosInternos(siguiente)
     }
     const numeroBorradoresJuegos = Object.keys(borradoresJuegos).length
-    /** Diálogo al cerrar el modal habiendo borradores de juegos sin enviar. */
-    const [salirConBorradores, setSalirConBorradores] = useState(false)
-    const [enviandoBorradores, setEnviandoBorradores] = useState(false)
 
     const seleccionado = useMemo(
         () => partidos.find(p => p.id === seleccionadoId) || null,
@@ -275,64 +267,6 @@ export default function PartidosResultadoModal({
         }
     }
 
-    /** Resuelve la alineación de un detalle desde CUALQUIER partido cargado
-     *  (los borradores pueden abarcar varios cruces en la vista de grupos). */
-    const resolverDetalle = (detalleId: number) => {
-        for (const p of partidos) {
-            const d = p.detalles?.find(x => x.id === detalleId)
-            if (!d) continue
-            return {
-                partidoProgramadoId: p.id,
-                jugadoresLocalIds: d.jugadores.filter(j => j.lado === 'LOCAL').map(j => j.jugador_id),
-                jugadoresVisitanteIds: d.jugadores.filter(j => j.lado === 'VISITANTE').map(j => j.jugador_id),
-            }
-        }
-        return null
-    }
-
-    /** Envía todos los borradores de juegos a la BD (lotes paralelos),
-     *  limpia los exitosos, parchea la UI vía onJuegosEnviados/onPersist
-     *  y reporta el resumen. Devuelve true si todo quedó enviado. */
-    const enviarJuegosPendientes = async (): Promise<number> => {
-        if (!torneo || numeroBorradoresJuegos === 0) return 0
-        setEnviandoBorradores(true)
-        try {
-            const { guardados, fallidos } = await enviarBorradoresJuegos({
-                torneoId: torneo.id,
-                borradores: borradoresJuegos,
-                resolverDetalle,
-            })
-            if (guardados.length > 0) {
-                setBorradoresJuegos(Object.fromEntries(
-                    Object.entries(borradoresJuegos).filter(([id]) => !guardados.includes(Number(id)))
-                ))
-                // Parche optimista agrupado por cruce afectado.
-                const porPartido = new Map<number, number[]>()
-                for (const id of guardados) {
-                    const pid = resolverPartidoDeDetalle(id)
-                    if (pid == null) continue
-                    porPartido.set(pid, [...(porPartido.get(pid) ?? []), id])
-                }
-                for (const [pid, ids] of porPartido) onJuegosEnviados?.(pid, ids)
-                onPersist?.()
-                if (fallidos.length === 0) toast.success(`${guardados.length} juego${guardados.length === 1 ? '' : 's'} guardado${guardados.length === 1 ? '' : 's'} — serie al día`)
-                else toast.error(`${guardados.length} guardados, ${fallidos.length} con error: ${fallidos[0].motivo}`)
-            } else if (fallidos.length > 0) {
-                toast.error(`No se guardó ningún juego: ${fallidos[0].motivo}`)
-            }
-            return fallidos.length
-        } finally {
-            setEnviandoBorradores(false)
-        }
-    }
-
-    const resolverPartidoDeDetalle = (detalleId: number): number | null => {
-        for (const p of partidos) {
-            if (p.detalles?.some(d => d.id === detalleId)) return p.id
-        }
-        return null
-    }
-
     const guardarResultado = () => {
         if (!seleccionado) return
         if (seleccionado.estado === 'FINALIZADO') {
@@ -406,28 +340,19 @@ export default function PartidosResultadoModal({
         setConfirmarDeshacerSerie(true)
     }
 
-    /** Salida real del modal (tras el diálogo o sin borradores de juegos).
-     *  Los borradores de PARTIDO permanecen en memoria del padre: ahí ya
-     *  se anuncian con el toast histórico. */
-    const cerrarDefinitivo = () => {
-        const cantidad = Object.keys(borradores).length
-        if (cantidad > 0) {
+    /** Salida del modal: los borradores permanecen en memoria del padre y
+     *  se envían en un solo lote desde la vista principal. Solo avisamos
+     *  por toast; el DIÁLOGO de advertencia vive en el modal grande. */
+    const cerrar = () => {
+        const np = Object.keys(borradores).length
+        const nj = numeroBorradoresJuegos
+        if (np + nj > 0) {
             toast.success(
-                `${cantidad} borrador${cantidad === 1 ? '' : 'es'} pendiente${cantidad === 1 ? '' : 's'}. Pulsa "Guardar cambios" en la vista principal para enviar.`,
+                `${np + nj} borrador${np + nj === 1 ? '' : 'es'} sin enviar. Pulsa "Guardar cambios" en la vista principal para enviarlos juntos.`,
                 { duration: 4000 }
             )
         }
         onClose()
-    }
-
-    const cerrar = () => {
-        // Hay juegos en borrador: avisamos con opciones en vez de dejarlo
-        // pasar desapercibido (previene cerrar sin darse cuenta).
-        if (numeroBorradoresJuegos > 0) {
-            setSalirConBorradores(true)
-            return
-        }
-        cerrarDefinitivo()
     }
 
     if (!isOpen || !seleccionado) return null
@@ -461,15 +386,6 @@ export default function PartidosResultadoModal({
                             </Button>
                         )}
                         <Button variant="secondary" onClick={cerrar}>Cerrar</Button>
-                        {numeroBorradoresJuegos > 0 && (
-                            <Button
-                                variant="primary"
-                                onClick={() => void enviarJuegosPendientes()}
-                                isLoading={enviandoBorradores}
-                            >
-                                Enviar {numeroBorradoresJuegos} borrador{numeroBorradoresJuegos === 1 ? '' : 'es'}
-                            </Button>
-                        )}
                     </>
                 }
             >
@@ -512,28 +428,6 @@ export default function PartidosResultadoModal({
                     })}
                 </div>
             </Modal>
-            <ConfirmDialog
-                isOpen={salirConBorradores}
-                onClose={() => {
-                    setSalirConBorradores(false)
-                    // «Salir sin enviar»: los borradores quedan en memoria
-                    // del padre y siguen disponibles al reabrir.
-                    cerrarDefinitivo()
-                }}
-                onConfirm={() => {
-                    setSalirConBorradores(false)
-                    void (async () => {
-                        const fallidos = await enviarJuegosPendientes()
-                        if (fallidos === 0) cerrarDefinitivo()
-                    })()
-                }}
-                titulo="Borradores sin enviar"
-                descripcion={`Tienes ${numeroBorradoresJuegos} juego${numeroBorradoresJuegos === 1 ? '' : 's'} en borrador que NO se han guardado en la base de datos.`}
-                confirmLabel="Guardar y salir"
-                cancelLabel="Salir sin guardar"
-                variant="primary"
-                busy={enviandoBorradores}
-            />
             {seleccionado.estado === 'FINALIZADO' && (
                 <ConfirmDialog
                     isOpen={confirmarDeshacerSerie}

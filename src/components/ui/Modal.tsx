@@ -28,6 +28,11 @@ const sizeClasses: Record<ModalSize, string> = {
     full: 'max-w-none sm:max-w-[96vw]',
 }
 
+/** Pila de modales abiertos (module scope): con modales apilados (serie →
+ *  juego → confirmación), Escape debe cerrar SOLO el más reciente y no
+ *  toda la pila de golpe. */
+const pilaModales: symbol[] = []
+
 export default function Modal({
     isOpen,
     onClose,
@@ -40,15 +45,19 @@ export default function Modal({
 }: ModalProps) {
     useEffect(() => {
         if (!isOpen) return
+        const id = Symbol('modal-abierto')
+        pilaModales.push(id)
         const previousOverflow = document.body.style.overflow
         document.body.style.overflow = 'hidden'
 
         const onKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onClose()
+            if (e.key === 'Escape' && pilaModales[pilaModales.length - 1] === id) onClose()
         }
         window.addEventListener('keydown', onKeyDown)
 
         return () => {
+            const indice = pilaModales.indexOf(id)
+            if (indice >= 0) pilaModales.splice(indice, 1)
             document.body.style.overflow = previousOverflow
             window.removeEventListener('keydown', onKeyDown)
         }

@@ -417,6 +417,14 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
 
     const numeroBorradoresJuegos = Object.keys(borradoresJuegos).length
 
+    /** Cruce al que pertenece un detalle (para agrupar el parche optimista). */
+    const resolverPartidoDeDetalleGrupos = (detalleId: number): number | null => {
+        for (const p of partidos) {
+            if (p.detalles.some(d => d.id === detalleId)) return p.id
+        }
+        return null
+    }
+
     /** Cierre del modal padre con borradores pendientes (partidos y/o
      *  juegos): ofrece «Guardar y salir» en vez de perderlos de vista. */
     const intentarCerrarPartidos = () => {
@@ -427,35 +435,15 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         onClose()
     }
 
-    /** «Guardar y salir»: envía primero los borradores de partidos y luego
-     *  los de juegos; si algún juego falla, se queda abierto para revisar
-     *  (los de partidos que fallen los gestiona guardarBorradores con su
-     *  propio toast y permanecen en memoria). */
+    /** «Guardar y salir»: un solo lote (partidos + juegos) y cierra solo
+     *  si todo quedó guardado; los fallidos se quedan como borrador. */
     const cerrarGuardandoTodo = async () => {
         if (!torneo) return onClose()
         setCerrandoConEnvio(true)
         try {
-            if (Object.keys(borradores).length > 0) await guardarBorradores()
-            let fallidosJuegos: { id: number; motivo: string }[] = []
-            if (numeroBorradoresJuegos > 0) {
-                const r = await enviarBorradoresJuegos({
-                    torneoId: torneo.id,
-                    borradores: borradoresJuegos,
-                    resolverDetalle: resolverDetalleGrupos,
-                })
-                fallidosJuegos = r.fallidos
-                if (r.guardados.length > 0) {
-                    setBorradoresJuegos(Object.fromEntries(
-                        Object.entries(borradoresJuegos).filter(([id]) => !r.guardados.includes(Number(id)))
-                    ))
-                }
-            }
+            const ok = await guardarBorradores()
             setSalirConBorradores(false)
-            if (fallidosJuegos.length === 0) {
-                onClose()
-            } else {
-                toast.error(`${fallidosJuegos.length} juego${fallidosJuegos.length === 1 ? '' : 's'} con error: ${fallidosJuegos[0].motivo}. Quedan en borrador.`)
-            }
+            if (ok) onClose()
         } finally {
             setCerrandoConEnvio(false)
         }
@@ -587,8 +575,11 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         return null
     }
 
-    const guardarBorradores = async () => {
-        if (!torneo || Object.keys(borradores).length === 0) return
+    /** Envía el lote completo de borradores (partidos Y juegos de serie).
+     *  Devuelve true si todo quedó guardado sin errores. */
+    const guardarBorradores = async (): Promise<boolean> => {
+        if (!torneo) return false
+        if (Object.keys(borradores).length === 0 && numeroBorradoresJuegos === 0) return true
         setGenerando(true)
         const guardados: number[] = []
         const fallidos: { id: number; motivo: string }[] = []
@@ -632,6 +623,33 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         for (let i = 0; i < borradoresActuales.length; i += LOTE) {
             await Promise.all(borradoresActuales.slice(i, i + LOTE).map(guardarUno))
         }
+
+        // Juegos de serie en borrador: mismo lote de salida, mismo refresco.
+        let juegosGuardados = 0
+        let fallidosJuegos: { id: number; motivo: string }[] = []
+        if (torneo && numeroBorradoresJuegos > 0) {
+            const r = await enviarBorradoresJuegos({
+                torneoId: torneo.id,
+                borradores: borradoresJuegos,
+                resolverDetalle: resolverDetalleGrupos,
+            })
+            fallidosJuegos = r.fallidos
+            if (r.guardados.length > 0) {
+                juegosGuardados = r.guardados.length
+                // Parche optimista agrupado por cruce ANTES de limpiar los
+                // borradores (el parche lee los sets desde ahí).
+                const porPartido = new Map<number, number[]>()
+                for (const id of r.guardados) {
+                    const pid = resolverPartidoDeDetalleGrupos(id)
+                    if (pid == null) continue
+                    porPartido.set(pid, [...(porPartido.get(pid) ?? []), id])
+                }
+                for (const [pid, ids] of porPartido) parcheJuegosEnviados(pid, ids)
+                setBorradoresJuegos(Object.fromEntries(
+                    Object.entries(borradoresJuegos).filter(([id]) => !r.guardados.includes(Number(id)))
+                ))
+            }
+        }
         // Limpiamos de `borradores` los que sí quedaron persistidos (éxito o
         // 409), conservando los que fallaron para que el usuario los revise.
         if (guardados.length > 0) {
@@ -645,17 +663,20 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         // finalizados, clasificaciones recalculadas, borradores fantasma
         // eliminados de la UI.
         await cargar(true)
-        if (fallidos.length === 0) {
-            toast.success(`${guardados.length} resultado${guardados.length === 1 ? '' : 's'} guardados y ranking actualizado`)
-        } else if (guardados.length === 0) {
+        const totalGuardados = guardados.length + juegosGuardados
+        const totalFallidos = fallidos.length + fallidosJuegos.length
+        if (totalFallidos === 0) {
+            toast.success(`${totalGuardados} resultado${totalGuardados === 1 ? '' : 's'} guardado${totalGuardados === 1 ? '' : 's'} y ranking actualizado`)
+        } else if (totalGuardados === 0) {
             // Mostramos el primer motivo: sin esto, un lote que falla entero
             // (ej. torneo borrado → 404) no dice POR QUÉ.
-            toast.error(`No se guardó ningún resultado: ${fallidos[0]?.motivo ?? 'error desconocido'}. Revisa los ${fallidos.length} borrador${fallidos.length === 1 ? '' : 'es'}`)
+            toast.error(`No se guardó ningún resultado: ${fallidos[0]?.motivo ?? fallidosJuegos[0]?.motivo ?? 'error desconocido'}. Revisa los ${totalFallidos} borrador${totalFallidos === 1 ? '' : 'es'}`)
         } else {
-            const motivo = fallidos[0].motivo
-            toast.error(`${guardados.length} guardados, ${fallidos.length} con error: ${motivo}${fallidos.length > 1 ? '…' : ''}`)
+            const motivo = fallidos[0]?.motivo ?? fallidosJuegos[0]?.motivo ?? ''
+            toast.error(`${totalGuardados} guardados, ${totalFallidos} con error: ${motivo}${totalFallidos > 1 ? '…' : ''}`)
         }
         setGenerando(false)
+        return totalFallidos === 0
     }
 
     const imprimir = () => {
@@ -1034,12 +1055,13 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                         )}
                         <Button
                             variant="primary"
-                            onClick={guardarBorradores}
+                            onClick={() => void guardarBorradores()}
                             isLoading={generando}
-                            disabled={numeroBorradores === 0}
+                            disabled={numeroBorradores + numeroBorradoresJuegos === 0}
                             leadingIcon={<CheckBadgeIcon className="h-4 w-4" />}
+                            title={numeroBorradoresJuegos > 0 ? 'Incluye juegos de serie cargados en borrador' : undefined}
                         >
-                            {`Guardar cambios (${numeroBorradores})`}
+                            {`Guardar cambios (${numeroBorradores + numeroBorradoresJuegos})`}
                         </Button>
                         {grupoModalId !== null && (
                             <Button
@@ -1205,7 +1227,6 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                     onDeshacerLocal={deshacerPartidoLocal}
                     borradoresJuegos={borradoresJuegos}
                     onBorradoresJuegosChange={setBorradoresJuegos}
-                    onJuegosEnviados={parcheJuegosEnviados}
                     onPersist={() => {
                         cargar(true)
                     }}
