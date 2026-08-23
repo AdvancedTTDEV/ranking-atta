@@ -44,8 +44,25 @@
  * o EQUIPOS) la hoja es la misma: 3 filas por mitad.
  */
 
+import { MATCHUPS_DOBLES, MATCHUPS_EQUIPOS } from './matchups'
+
 const LETRAS_LOCALES = ['A', 'B', 'C'] as const
 const LETRAS_VISITANTES = ['X', 'Y', 'Z'] as const
+
+type ModalidadHoja = 'DOBLES' | 'EQUIPOS'
+
+/** Tira informativa con el ORDEN de los partidos de la serie ATTA, para
+ *  que el capitán sepa qué posiciones juegan en cada juego. Es solo
+ *  referencia visual: no altera el resto de la hoja. */
+function bloqueOrdenPartidos(modalidad: ModalidadHoja): string {
+    const items = modalidad === 'DOBLES' ? MATCHUPS_DOBLES : MATCHUPS_EQUIPOS
+    return `
+        <div class="orden-partidos">
+            <span class="orden-titulo">Orden de partidos</span>
+            ${items.map((m, i) => `<span class="orden-item"><b>${i + 1}</b>${escaparHtml(m.etiqueta)}</span>`).join('')}
+        </div>
+    `
+}
 
 function escaparHtml(texto: string): string {
     return texto.replace(/[&<>"']/g, c => (
@@ -56,10 +73,11 @@ function escaparHtml(texto: string): string {
 interface BloqueMitadArgs {
     titulo: 'ABC' | 'XYZ'
     letras: readonly string[]
+    modalidad: ModalidadHoja
 }
 
 /** Bloque de una mitad: tabla con filas A..C o X..Z + zona nombre/capitán. */
-function bloqueMitad({ titulo, letras }: BloqueMitadArgs): string {
+function bloqueMitad({ titulo, letras, modalidad }: BloqueMitadArgs): string {
     const filas = letras.map(letra => `
         <tr>
             <td class="col-pos"><b>${letra}</b></td>
@@ -92,6 +110,7 @@ function bloqueMitad({ titulo, letras }: BloqueMitadArgs): string {
                     <span class="info-bloque info-firma"></span>
                 </div>
             </div>
+            ${bloqueOrdenPartidos(modalidad)}
         </section>
     `
 }
@@ -99,9 +118,10 @@ function bloqueMitad({ titulo, letras }: BloqueMitadArgs): string {
 interface BloqueHojaArgs {
     torneo: { nombre: string }
     categoria: string
+    modalidad: ModalidadHoja
 }
 
-function bloqueHoja({ torneo, categoria }: BloqueHojaArgs): string {
+function bloqueHoja({ torneo, categoria, modalidad }: BloqueHojaArgs): string {
     return `
         <section class="page">
             <header class="cabecera">
@@ -112,13 +132,13 @@ function bloqueHoja({ torneo, categoria }: BloqueHojaArgs): string {
                 </div>
                 <img class="logo logo-der" src="/templates/escudo-panama.png" alt="Alcaldía de Panamá" onerror="this.style.visibility='hidden'" />
             </header>
-            ${bloqueMitad({ titulo: 'ABC', letras: LETRAS_LOCALES })}
+            ${bloqueMitad({ titulo: 'ABC', letras: LETRAS_LOCALES, modalidad })}
             <div class="corte">
                 <span class="corte-linea"></span>
                 <span class="corte-icono">✂ cortar</span>
                 <span class="corte-linea"></span>
             </div>
-            ${bloqueMitad({ titulo: 'XYZ', letras: LETRAS_VISITANTES })}
+            ${bloqueMitad({ titulo: 'XYZ', letras: LETRAS_VISITANTES, modalidad })}
             <footer class="pie-firmas">
                 <div class="firma-bloque">
                     <div class="firma-linea"></div>
@@ -163,6 +183,10 @@ const CSS_HOJA = `
     .corte{display:flex;align-items:center;gap:6px;padding:6px 8px;color:#94a3b8}
     .corte-linea{flex:1;border-top:2px dashed #94a3b8}
     .corte-icono{font-size:11px;letter-spacing:1px;font-style:italic;color:#64748b;white-space:nowrap}
+    .orden-partidos{display:flex;flex-wrap:wrap;align-items:center;gap:3px 10px;border-top:1.5px dashed #cbd5e1;margin-top:auto;padding-top:6px;padding-left:4px;padding-right:4px}
+    .orden-titulo{font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:.8px;color:#0f172a;margin-right:2px}
+    .orden-item{font-size:12.5px;font-weight:600;color:#334155;white-space:nowrap}
+    .orden-item b{display:inline-block;background:#f1f5f9;border:1.5px solid #0f172a;border-radius:4px;padding:0 5px;margin-right:4px;font-size:11px;color:#0f172a}
     .pie-firmas{padding:6px 8px 4px}
     .firma-bloque{width:60%;margin-left:auto;text-align:center}
     .firma-linea{border-bottom:2px solid #0f172a;height:32px}
@@ -175,6 +199,8 @@ interface ImprimirHojaArgs {
     torneo: { nombre: string }
     /** Categoría del torneo (para mostrar en el subtítulo). */
     categoria: string
+    /** Modalidad: define el «Orden de partidos» impreso. Default EQUIPOS. */
+    modalidad?: ModalidadHoja
 }
 
 /**
@@ -186,7 +212,7 @@ export function imprimirHojaAlineacion(args: ImprimirHojaArgs): boolean {
     const ventana = window.open('', '_blank', 'width=900,height=1200')
     if (!ventana) return false
 
-    ventana.document.write(`<!doctype html><html><head><title>Hoja de alineación · ${escaparHtml(args.torneo.nombre)}</title><style>${CSS_HOJA}</style></head><body>${bloqueHoja(args)}<script>window.onload=()=>window.print()<\/script></body></html>`)
+    ventana.document.write(`<!doctype html><html><head><title>Hoja de alineación · ${escaparHtml(args.torneo.nombre)}</title><style>${CSS_HOJA}</style></head><body>${bloqueHoja({ modalidad: 'EQUIPOS', ...args })}<script>window.onload=()=>window.print()<\/script></body></html>`)
     ventana.document.close()
     return true
 }
@@ -196,6 +222,8 @@ interface ImprimirAlineacionesBatchArgs {
     categoria: string
     /** Cantidad de hojas a imprimir (= partidos que necesitan alineación). */
     cantidadPartidos: number
+    /** Modalidad: define el «Orden de partidos» impreso. Default EQUIPOS. */
+    modalidad?: ModalidadHoja
 }
 
 /**
@@ -205,11 +233,11 @@ interface ImprimirAlineacionesBatchArgs {
  * línea punteada y reparte 1 medio a cada capitán.
  */
 export function imprimirAlineacionesBatch(args: ImprimirAlineacionesBatchArgs): boolean {
-    const { torneo, categoria, cantidadPartidos } = args
+    const { torneo, categoria, cantidadPartidos, modalidad = 'EQUIPOS' } = args
     if (cantidadPartidos <= 0) return false
 
     const paginas = Array.from({ length: cantidadPartidos }, () =>
-        bloqueHoja({ torneo, categoria })
+        bloqueHoja({ torneo, categoria, modalidad })
     ).join('')
 
     const ventana = window.open('', '_blank', 'width=900,height=1200')

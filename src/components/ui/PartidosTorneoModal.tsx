@@ -904,6 +904,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                                         torneo: { nombre: torneo.nombre },
                                         categoria: cat,
                                         cantidadPartidos: partidos.length,
+                                        modalidad: torneo.modalidad === 'DOBLES' ? ('DOBLES' as const) : ('EQUIPOS' as const),
                                     })
                                     if (!ok) toast.error('El navegador bloqueó la ventana de impresión')
                                 }}
