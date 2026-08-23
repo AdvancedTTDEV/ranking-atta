@@ -60,6 +60,9 @@ interface Props {
     /** Parche optimista tras «Deshacer»: el padre marca el partido (y sus
      *  detalles de serie) como pendiente al instante, sin esperar el fetch. */
     onDeshacerLocal?: (partidoId: number) => void
+    /** Tras deshacer con éxito: los padres limpian cachés derivadas
+     *  (p. ej. las series precargadas de llaves quedaron obsoletas). */
+    onDeshacerHecho?: () => void
     /** Borradores de JUEGOS de serie (clave = detalle id), controlados por
      *  el padre para que sobrevivan al cierre y se envíen en UN solo lote
      *  desde la vista principal. Si no se pasan, se usan internos. */
@@ -83,6 +86,7 @@ export default function PartidosResultadoModal({
     borradores,
     onBorradoresChange,
     onDeshacerLocal,
+    onDeshacerHecho,
     borradoresJuegos: borradoresJuegosProp,
     onBorradoresJuegosChange,
     onPersist,
@@ -320,6 +324,7 @@ export default function PartidosResultadoModal({
             // Actualización al instante en la UI (el partido vuelve a
             // pendiente aquí mismo); onPersist solo revalida por detrás.
             onDeshacerLocal?.(seleccionado.id)
+            onDeshacerHecho?.()
             toast.success('Resultado revertido')
             onPersist?.()
         } catch (error) {

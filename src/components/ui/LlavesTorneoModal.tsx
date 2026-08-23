@@ -346,10 +346,12 @@ export default function LlavesTorneoModal({
         seriesEnVuelo.current.clear()
     }
 
-    /** Alineación de un detalle desde las series precargadas o lo ya
-     *  cargado en estado (para enviar borradores sin re-fetch). */
+    /** Alineación de un detalle desde lo ya cargado en estado o las series
+     *  precargadas (para enviar borradores sin re-fetch). El estado fresco
+     *  va PRIMERO: la caché de series puede quedar obsoleta tras un
+     *  «Deshacer serie». */
     const resolverDetalleLlave = (detalleId: number) => {
-        const fuentes = [...cacheSeries.current.values(), ...partidos]
+        const fuentes = [...partidos, ...cacheSeries.current.values()]
         for (const p of fuentes) {
             const d = p.detalles?.find(x => x.id === detalleId)
             if (!d) continue
@@ -360,6 +362,18 @@ export default function LlavesTorneoModal({
             }
         }
         return null
+    }
+
+    /** Etiqueta legible de un juego para los toasts: «Cruce #3 · Dobles». */
+    const etiquetaDetalleLlave = (detalleId: number): string => {
+        const fuentes = [...partidos, ...cacheSeries.current.values()]
+        for (const p of fuentes) {
+            const d = p.detalles?.find(x => x.id === detalleId)
+            if (!d) continue
+            const cruce = 'posicion_llave' in p ? `Cruce #${p.posicion_llave ?? '?'}` : 'Serie'
+            return `${cruce} · ${d.tipo === 'DOBLES' ? 'Dobles' : `Individual ${d.orden}`}`
+        }
+        return `Juego #${detalleId}`
     }
 
     /** Parche optimista al enviarse juegos: marca los detalles como
@@ -394,7 +408,7 @@ export default function LlavesTorneoModal({
 
     /** Cruce al que pertenece un detalle (para agrupar el parche optimista). */
     const resolverPartidoDeDetalleLlave = (detalleId: number): number | null => {
-        const fuentes = [...cacheSeries.current.values(), ...partidos]
+        const fuentes = [...partidos, ...cacheSeries.current.values()]
         for (const p of fuentes) {
             if (p.detalles?.some(d => d.id === detalleId)) return p.id
         }
@@ -438,10 +452,39 @@ export default function LlavesTorneoModal({
             invalidarCache(nivelRef.current)
             invalidarSeries()
             cargar(undefined, true)
-            toast.success(`${guardados.length} juego${guardados.length === 1 ? '' : 's'} guardado${guardados.length === 1 ? '' : 's'} — ranking actualizado`)
+            const crucesUnicos = [...new Set(
+                guardados.map(id => resolverPartidoDeDetalleLlave(id)).filter((x): x is number => x != null)
+            )].map(pid => {
+                const p = partidos.find(x => x.id === pid) ?? cacheSeries.current.get(pid)
+                const num = p && 'posicion_llave' in p ? p.posicion_llave : undefined
+                return `#${num ?? '?'}`
+            })
+            toast.success(
+                `${guardados.length} juego${guardados.length === 1 ? '' : 's'} guardado${guardados.length === 1 ? '' : 's'} — ranking actualizado` +
+                (crucesUnicos.length > 0 && crucesUnicos.length <= 4 ? ` (${crucesUnicos.join(', ')})` : '')
+            )
         }
         if (fallidos.length > 0) {
-            toast.error(`${fallidos.length} juego${fallidos.length === 1 ? '' : 's'} con error: ${fallidos[0].motivo}. Quedan en borrador.`)
+            // Huérfanos: borradores cuyo cruce ya no está en el estado
+            // (cambio de categoría, deshacer + recarga, etc.). No se pueden
+            // enviar desde aquí; se descartan avisando cuántos eran.
+            const huerfanos = fallidos.filter(f => f.motivo.includes('alineación')).map(f => f.id)
+            if (huerfanos.length > 0) {
+                setBorradoresJuegosLlave(prev => Object.fromEntries(
+                    Object.entries(prev).filter(([id]) => !huerfanos.includes(Number(id)))
+                ))
+            }
+            const enviables = fallidos.filter(f => !huerfanos.includes(f.id))
+            const detalle = enviables.slice(0, 3)
+                .map(f => `${etiquetaDetalleLlave(f.id)}: ${f.motivo}`)
+                .join(' · ')
+            toast.error(
+                `${enviables.length} juego${enviables.length === 1 ? '' : 's'} con error` +
+                (detalle ? ` — ${detalle}${enviables.length > 3 ? '…' : ''}` : '') +
+                `. Quedan en borrador.` +
+                (huerfanos.length > 0 ? ` Se descartaron ${huerfanos.length} borrador(es) de un cruce ya no disponible.` : ''),
+                { duration: 6000 }
+            )
         }
         return fallidos.length === 0
     }
@@ -1664,6 +1707,12 @@ export default function LlavesTorneoModal({
                     borradoresJuegos={borradoresJuegosLlave}
                     onBorradoresJuegosChange={setBorradoresJuegosLlave}
                     onPersist={() => {
+                        invalidarCache(nivelRef.current)
+                        invalidarSeries()
+                        cargar(undefined, true)
+                    }}
+                    onDeshacerHecho={() => {
+                        // Tras deshacer, la serie precargada quedó obsoleta.
                         invalidarCache(nivelRef.current)
                         invalidarSeries()
                         cargar(undefined, true)

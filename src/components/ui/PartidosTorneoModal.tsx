@@ -420,6 +420,17 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
 
     const numeroBorradoresJuegos = Object.keys(borradoresJuegos).length
 
+    /** Etiqueta legible de un juego para los toasts: «Grupo 2 · cruce #3 · Dobles». */
+    const etiquetaDetalleGrupos = (detalleId: number): string => {
+        for (const p of partidos) {
+            const d = p.detalles.find(x => x.id === detalleId)
+            if (!d) continue
+            const grupoTxt = p.torneo_grupos ? `Grupo ${p.torneo_grupos.numero_grupo}` : 'Sin grupo'
+            return `${grupoTxt} · cruce #${p.orden} · ${d.tipo === 'DOBLES' ? 'Dobles' : `Individual ${d.orden}`}`
+        }
+        return `Juego #${detalleId}`
+    }
+
     /** Deshacer resultado/serie desde la lista de cruces: llama al DELETE
      *  (revierte ranking vía SP), limpia borradores del cruce y refresca. */
     const ejecutarDeshacer = async () => {
@@ -693,15 +704,44 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         await cargar(true)
         const totalGuardados = guardados.length + juegosGuardados
         const totalFallidos = fallidos.length + fallidosJuegos.length
+        // Huérfanos: borradores cuyo cruce ya no está en el estado cargado
+        // (cambio de categoría, deshacer + recarga…). No se pueden enviar
+        // desde aquí; se descartan avisando cuántos eran.
+        const huerfanosJuegos = fallidosJuegos.filter(f => f.motivo.includes('alineación')).map(f => f.id)
+        if (huerfanosJuegos.length > 0) {
+            setBorradoresJuegos(prev => Object.fromEntries(
+                Object.entries(borradoresJuegos).filter(([id]) => !huerfanosJuegos.includes(Number(id)))
+            ))
+            fallidosJuegos = fallidosJuegos.filter(f => !huerfanosJuegos.includes(f.id))
+        }
         if (totalFallidos === 0) {
             toast.success(`${totalGuardados} resultado${totalGuardados === 1 ? '' : 's'} guardado${totalGuardados === 1 ? '' : 's'} y ranking actualizado`)
         } else if (totalGuardados === 0) {
-            // Mostramos el primer motivo: sin esto, un lote que falla entero
-            // (ej. torneo borrado → 404) no dice POR QUÉ.
-            toast.error(`No se guardó ningún resultado: ${fallidos[0]?.motivo ?? fallidosJuegos[0]?.motivo ?? 'error desconocido'}. Revisa los ${totalFallidos} borrador${totalFallidos === 1 ? '' : 'es'}`)
+            // Mostramos los primeros motivos CON ubicación: sin esto, un
+            // lote que falla entero no dice QUÉ cruce ni POR QUÉ.
+            const motivos = [
+                ...fallidos.slice(0, 2).map(f => {
+                    const p = partidos.find(x => x.id === f.id)
+                    const grupoTxt = p?.torneo_grupos ? `Grupo ${p.torneo_grupos.numero_grupo}` : 'Sin grupo'
+                    return `${grupoTxt} · cruce #${p?.orden ?? '?'}: ${f.motivo}`
+                }),
+                ...fallidosJuegos.slice(0, 2).map(f => `${etiquetaDetalleGrupos(f.id)}: ${f.motivo}`),
+            ].slice(0, 3).join(' · ')
+            toast.error(`No se guardó ningún resultado — ${motivos}${totalFallidos > 3 ? '…' : ''}. Revisa los ${totalFallidos} borrador${totalFallidos === 1 ? '' : 'es'}`, { duration: 6000 })
         } else {
-            const motivo = fallidos[0]?.motivo ?? fallidosJuegos[0]?.motivo ?? ''
-            toast.error(`${totalGuardados} guardados, ${totalFallidos} con error: ${motivo}${totalFallidos > 1 ? '…' : ''}`)
+            const motivos = [
+                ...fallidos.slice(0, 2).map(f => {
+                    const p = partidos.find(x => x.id === f.id)
+                    const grupoTxt = p?.torneo_grupos ? `Grupo ${p.torneo_grupos.numero_grupo}` : 'Sin grupo'
+                    return `${grupoTxt} · cruce #${p?.orden ?? '?'}: ${f.motivo}`
+                }),
+                ...fallidosJuegos.slice(0, 2).map(f => `${etiquetaDetalleGrupos(f.id)}: ${f.motivo}`),
+            ].slice(0, 3).join(' · ')
+            toast.error(
+                `${totalGuardados} guardado${totalGuardados === 1 ? '' : 's'}, ${totalFallidos - huerfanosJuegos.length} con error${motivos ? ` — ${motivos}${totalFallidos > 3 ? '…' : ''}` : ''}` +
+                (huerfanosJuegos.length > 0 ? `. Se descartaron ${huerfanosJuegos.length} borrador(es) de un cruce ya no disponible.` : ''),
+                { duration: 6000 }
+            )
         }
         setGenerando(false)
         return totalFallidos === 0
