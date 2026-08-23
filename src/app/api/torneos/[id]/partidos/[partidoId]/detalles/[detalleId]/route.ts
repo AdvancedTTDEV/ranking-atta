@@ -91,17 +91,33 @@ export async function PUT(request: Request, { params }: RouteParams) {
         })
         const victoriasLocal = detallesFinalizados.filter(item => item.ganador_lado === 'LOCAL').length
         const victoriasVisitante = detallesFinalizados.filter(item => item.ganador_lado === 'VISITANTE').length
+        const serieCerrada = victoriasLocal === 3 || victoriasVisitante === 3
         await prisma.torneo_partidos_programados.update({
             where: { id: programadoId },
             data: {
                 sets_local: victoriasLocal,
                 sets_visitante: victoriasVisitante,
-                ...(victoriasLocal === 3 || victoriasVisitante === 3 ? {
+                ...(serieCerrada ? {
                     ganador_participante_id: victoriasLocal === 3 ? detalle.partido_programado.participante_local_id : detalle.partido_programado.participante_visitante_id,
                     estado: 'FINALIZADO'
                 } : {})
             }
         })
+
+        // En llaves, cerrar la serie SIEMBRA al ganador en la siguiente
+        // ronda (mismo efecto que el PATCH manual de llaves).
+        if (
+            serieCerrada && detalle.partido_programado.fase === 'ELIMINACION'
+            && detalle.partido_programado.siguiente_partido_id && detalle.partido_programado.siguiente_lado
+        ) {
+            const ganadorId = victoriasLocal === 3 ? detalle.partido_programado.participante_local_id : detalle.partido_programado.participante_visitante_id
+            await prisma.torneo_partidos_programados.update({
+                where: { id: detalle.partido_programado.siguiente_partido_id },
+                data: detalle.partido_programado.siguiente_lado === 'LOCAL'
+                    ? { participante_local_id: ganadorId }
+                    : { participante_visitante_id: ganadorId },
+            })
+        }
 
         return NextResponse.json({ success: true, victoriasLocal, victoriasVisitante })
     } catch (error: any) {

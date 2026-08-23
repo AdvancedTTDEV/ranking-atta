@@ -55,6 +55,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
 
     if (!partido.participante_local || !partido.participante_visitante) return NextResponse.json({ error: 'El partido no está listo' }, { status: 400 })
+    // Series por equipos: el ganador sale de jugar la serie juego a juego
+    // (5 detalles), no de arrastrar un ganador a mano.
+    if (partido.torneos.modalidad === 'EQUIPOS' || partido.torneos.modalidad === 'ATTA_TEAMS') {
+      return NextResponse.json({ error: 'Las series por equipos se registran juego a juego con su botón «Resultado»' }, { status: 400 })
+    }
     if (![partido.participante_local_id, partido.participante_visitante_id].includes(Number(ganadorParticipanteId))) return NextResponse.json({ error: 'El ganador debe ser uno de los dos participantes' }, { status: 400 })
     // Las primeras llaves creadas guardaban R1/R2. Derivamos la ronda desde
     // la cadena de avance para enviar siempre un valor válido al enum antiguo.

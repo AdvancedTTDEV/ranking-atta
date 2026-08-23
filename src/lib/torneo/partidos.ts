@@ -48,3 +48,30 @@ export async function guardarJugadoresDetalle(
         await tx.torneo_partido_detalle_jugadores.createMany({ data })
     }
 }
+
+/**
+ * Garantiza que un encuentro por equipos (EQUIPOS / ATTA_TEAMS) tenga
+ * sus 5 sub-partidos: 1 DOBLES + 4 INDIVIDUAL, en el orden canónico
+ * ATTA (B+C vs Y+Z · A-X · C-Z · A-Y · B-X). Si ya tiene detalles, no
+ * toca nada (idempotente). Se usa al generar llaves y como backfill en
+ * la ruta de alineación, para brackets creados antes de que los
+ * partidos de llave tuvieran serie.
+ */
+export async function asegurarDetallesEncuentro(
+    tx: Prisma.TransactionClient,
+    partidoProgramadoId: number,
+): Promise<void> {
+    const existentes = await tx.torneo_partido_detalles.count({
+        where: { partido_programado_id: partidoProgramadoId },
+    })
+    if (existentes > 0) return
+    await tx.torneo_partido_detalles.createMany({
+        data: [
+            { partido_programado_id: partidoProgramadoId, orden: 1, tipo: 'DOBLES' as const },
+            { partido_programado_id: partidoProgramadoId, orden: 2, tipo: 'INDIVIDUAL' as const },
+            { partido_programado_id: partidoProgramadoId, orden: 3, tipo: 'INDIVIDUAL' as const },
+            { partido_programado_id: partidoProgramadoId, orden: 4, tipo: 'INDIVIDUAL' as const },
+            { partido_programado_id: partidoProgramadoId, orden: 5, tipo: 'INDIVIDUAL' as const },
+        ],
+    })
+}

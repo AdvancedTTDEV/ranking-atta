@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma'
 import { NextResponse } from 'next/server'
 import { PosicionManual, calcularClasificacionGrupo } from '@/lib/empates'
+import { asegurarDetallesEncuentro } from '@/lib/torneo/partidos'
 import { requireAuth } from '@/lib/auth'
 
 interface Params { params: Promise<{ id: string }> }
@@ -169,6 +170,13 @@ export async function POST(request: Request, { params }: Params) {
     if (nivelLlave !== null && ![1, 2, 3].includes(nivelLlave)) {
       return NextResponse.json({ error: 'Nivel de llave inválido' }, { status: 400 })
     }
+    // En torneos por equipos cada partido de llave es una SERIE (5 juegos),
+    // así que al crear el bracket le generamos sus detalles de una vez.
+    const torneo = await prisma.torneos.findUnique({
+      where: { id: torneoId },
+      select: { modalidad: true },
+    })
+    const esPorEquipos = torneo?.modalidad === 'EQUIPOS' || torneo?.modalidad === 'ATTA_TEAMS'
     // En ATTA Teams cada llave toma exactamente 1 clasificado por grupo.
     const clasificanEfectivo = nivelLlave ? 1 : Number(clasificanPorGrupo)
     const grupos = await prisma.torneo_grupos.findMany({
@@ -315,6 +323,7 @@ export async function POST(request: Request, { params }: Params) {
               estado: 'PENDIENTE',
             }
           })
+          if (esPorEquipos) await asegurarDetallesEncuentro(tx, creado.id)
           creados.push({ id: creado.id })
         }
         rondas.push(creados); partidosRonda /= 2; ronda++

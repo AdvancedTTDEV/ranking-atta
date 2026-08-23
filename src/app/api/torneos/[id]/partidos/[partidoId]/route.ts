@@ -215,6 +215,25 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
                     where: { id: partido.id },
                     data: { sets_local: 0, sets_visitante: 0, ganador_participante_id: null, estado: 'PENDIENTE' }
                 })
+
+                // En llaves, deshacer la serie también RETIRA al ganador de
+                // la siguiente ronda. Se bloquea si esa ronda ya se jugó.
+                if (partido.fase === 'ELIMINACION' && partido.siguiente_partido_id && partido.siguiente_lado) {
+                    const siguiente = await tx.torneo_partidos_programados.findUnique({
+                        where: { id: partido.siguiente_partido_id },
+                        select: { estado: true },
+                    })
+                    if (siguiente?.estado === 'FINALIZADO') {
+                        throw new Error('No se puede deshacer: la ronda siguiente ya fue jugada')
+                    }
+                    const slot = partido.siguiente_lado === 'LOCAL'
+                        ? { participante_local_id: null }
+                        : { participante_visitante_id: null }
+                    await tx.torneo_partidos_programados.update({
+                        where: { id: partido.siguiente_partido_id },
+                        data: slot,
+                    })
+                }
             }, { maxWait: 10_000, timeout: 30_000 })
             return NextResponse.json({ success: true })
         }

@@ -1,5 +1,5 @@
 import prisma from '@/lib/prisma'
-import { guardarJugadoresDetalle } from '@/lib/torneo/partidos'
+import { asegurarDetallesEncuentro, guardarJugadoresDetalle } from '@/lib/torneo/partidos'
 import { NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth'
 
@@ -74,6 +74,19 @@ export async function PUT(request: Request, { params }: RouteParams) {
         }
         if (partido.estado === 'FINALIZADO') {
             return NextResponse.json({ error: 'Este partido ya está finalizado' }, { status: 409 })
+        }
+
+        // Backfill: brackets de llave generados antes de que los partidos
+        // por equipos tuvieran serie llegan SIN detalles. Los creamos aquí
+        // para que el wizard siempre tenga los 5 juegos que alinear.
+        if (partido.detalles.length === 0 && (partido.torneos.modalidad === 'EQUIPOS' || partido.torneos.modalidad === 'ATTA_TEAMS')) {
+            await prisma.$transaction(async tx => {
+                await asegurarDetallesEncuentro(tx, programadoId)
+            })
+            partido.detalles = await prisma.torneo_partido_detalles.findMany({
+                where: { partido_programado_id: programadoId },
+                select: { id: true, tipo: true, estado: true },
+            })
         }
 
         const detallesPorId = new Map(partido.detalles.map(d => [d.id, d]))

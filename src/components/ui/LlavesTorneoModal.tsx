@@ -13,6 +13,8 @@ import {
 } from '@heroicons/react/24/outline'
 import Modal from '@/components/ui/Modal'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import EncuentroEquiposWizardModal from '@/components/ui/EncuentroEquiposWizardModal'
+import PartidosResultadoModal from '@/components/ui/PartidosResultadoModal'
 import NavegacionModales, { DestinoModal } from '@/components/ui/NavegacionModales'
 import CargandoPantalla from '@/components/ui/CargandoPantalla'
 import { Select } from '@/components/ui/Select'
@@ -59,6 +61,30 @@ type Torneo = {
     modalidad?: string
     abierto?: boolean
     torneo_categorias: { categorias: { id: number; nombre: string } }[]
+}
+
+/** Partido completo con sets por juego (GET /partidos/[partidoId]):
+ *  es el shape que consume PartidosResultadoModal para la serie. */
+type PartidoCompletoSerie = {
+    id: number
+    orden: number
+    estado: string
+    sets_local: number
+    sets_visitante: number
+    fase?: string
+    torneo_grupos?: { id: number; numero_grupo: number } | null
+    participante_local: Participante
+    participante_visitante: Participante
+    detalles: Array<{
+        id: number
+        orden: number
+        tipo: 'DOBLES' | 'INDIVIDUAL'
+        estado: string
+        sets_local: number
+        sets_visitante: number
+        jugadores: { jugador_id: number; lado: string; jugadores: Jugador & { id: number } }[]
+        sets: { numero: number; puntos_local: number; puntos_visitante: number }[]
+    }>
 }
 
 /** Item del pool esperado. El backend lo calcula en el GET (?withPool=true). */
@@ -256,6 +282,35 @@ export default function LlavesTorneoModal({
     const [nivel, setNivel] = useState<1 | 2 | 3>(1)
     const nivelRef = useRef<1 | 2 | 3>(1)
     useEffect(() => { nivelRef.current = nivel }, [nivel])
+
+    /** Series por equipos: los partidos de llave se alinean y juegan
+     *  juego a juego (mismo flujo que la fase de grupos). */
+    const esSerieEquipos = torneo?.modalidad === 'EQUIPOS' || torneo?.modalidad === 'ATTA_TEAMS'
+    const [wizardAlineacionId, setWizardAlineacionId] = useState<number | null>(null)
+    const [serieAbierta, setSerieAbierta] = useState<PartidoCompletoSerie | null>(null)
+    const [borradoresSerie, setBorradoresSerie] = useState<Record<number, { sets: { local: number; visitante: number }[] }>>({})
+    const [cargandoSerie, setCargandoSerie] = useState(false)
+
+    /** Abre el wizard ABC/XYZ para UN partido de llave. */
+    const abrirAlineacionLlave = (partidoId: number) => setWizardAlineacionId(partidoId)
+
+    /** Abre el modal de serie: pide el partido completo (con sets de cada
+     *  juego) al endpoint individual. */
+    const abrirResultadoLlave = async (partidoId: number) => {
+        if (!torneo) return
+        setCargandoSerie(true)
+        try {
+            const r = await fetch(`/api/torneos/${torneo.id}/partidos/${partidoId}`)
+            const d = await r.json()
+            if (!r.ok) throw new Error(d.error || 'No se pudo cargar la serie')
+            setBorradoresSerie({})
+            setSerieAbierta(d.partido)
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Error al cargar la serie')
+        } finally {
+            setCargandoSerie(false)
+        }
+    }
 
     /** Clave de caché: los datos son por categoría Y por nivel de llave. */
     const claveCache = (n: number) => `${categoriaId}:${n}`
@@ -1289,6 +1344,9 @@ export default function LlavesTorneoModal({
                         ganadoresBorrador={ganadoresBorrador}
                         setGanadoresBorrador={setGanadoresBorrador}
                         tieneFinalizados={tieneFinalizados}
+                        esSerieEquipos={esSerieEquipos}
+                        onAlinearPartido={abrirAlineacionLlave}
+                        onResultadoPartido={abrirResultadoLlave}
                         onEditarSiembra={() => setHasChangesSiembra(true)}
                     />
                 </div>
@@ -1309,6 +1367,65 @@ export default function LlavesTorneoModal({
                 confirmLabel={confirmacion === 'eliminar' ? 'Sí, eliminar' : 'Sí, regenerar'}
                 variant="danger"
             />
+            {/* Wizard ABC/XYZ para UN partido de llave por equipos */}
+            {wizardAlineacionId !== null && torneo && (() => {
+                const partido = partidos.find(p => p.id === wizardAlineacionId)
+                if (!partido || !partido.participante_local || !partido.participante_visitante) return null
+                return (
+                    <EncuentroEquiposWizardModal
+                        isOpen
+                        onClose={() => {
+                            setWizardAlineacionId(null)
+                            cargar(undefined, true)
+                        }}
+                        torneo={{ id: torneo.id, nombre: torneo.nombre }}
+                        categoria={torneo.torneo_categorias.find(tc => tc.categorias.id === Number(categoriaId))?.categorias.nombre || ''}
+                        grupoId={0}
+                        equipos={{
+                            local: partido.participante_local as never,
+                            visitante: partido.participante_visitante as never,
+                        }}
+                        partidos={[{
+                            id: partido.id,
+                            orden: 1,
+                            arbitro: null,
+                            detalles: (partido.detalles || []).map(d => ({
+                                id: d.id,
+                                orden: d.orden,
+                                tipo: d.tipo,
+                                jugadores: d.jugadores.map(j => ({
+                                    jugador_id: j.jugador_id,
+                                    lado: j.lado as 'LOCAL' | 'VISITANTE',
+                                    jugadores: { id: 0, nombre: j.jugadores.nombre },
+                                })),
+                            })) as never,
+                        }]}
+                        modalidad="EQUIPOS"
+                        onGuardado={() => cargar(undefined, true)}
+                    />
+                )
+            })()}
+            {/* Modal de serie por equipos para UN partido de llave: mismo
+                flujo que la fase de grupos (juego a juego hasta 3). */}
+            {serieAbierta && torneo && (
+                <PartidosResultadoModal
+                    isOpen
+                    onClose={() => {
+                        setSerieAbierta(null)
+                        invalidarCache(nivelRef.current)
+                        cargar(undefined, true)
+                    }}
+                    torneo={{ id: torneo.id, nombre: torneo.nombre, modalidad: torneo.modalidad === 'EQUIPOS' ? 'EQUIPOS' : 'ATTA_TEAMS' }}
+                    partidos={[serieAbierta] as never}
+                    partidoInicialId={serieAbierta.id}
+                    borradores={borradoresSerie}
+                    onBorradoresChange={setBorradoresSerie}
+                    onPersist={() => {
+                        invalidarCache(nivelRef.current)
+                        cargar(undefined, true)
+                    }}
+                />
+            )}
         </Modal>
     )
 }
@@ -1356,6 +1473,9 @@ function ManualSiembraView({
     ganadoresBorrador,
     setGanadoresBorrador,
     tieneFinalizados,
+    esSerieEquipos,
+    onAlinearPartido,
+    onResultadoPartido,
     onEditarSiembra,
 }: {
     partidosR1: Partido[]
@@ -1389,6 +1509,10 @@ function ManualSiembraView({
     ganadoresBorrador: Record<number, number>
     setGanadoresBorrador: React.Dispatch<React.SetStateAction<Record<number, number>>>
     tieneFinalizados: boolean
+    /** Torneo por equipos: cada cruce es una serie de 5 juegos. */
+    esSerieEquipos?: boolean
+    onAlinearPartido?: (partidoId: number) => void
+    onResultadoPartido?: (partidoId: number) => void
     onEditarSiembra: () => void
 }) {
     // Modo ARMAR: pool + editor de R1 (mientras falten slots o haya cambios
@@ -1427,6 +1551,9 @@ function ManualSiembraView({
                     setArrastre={setArrastre}
                     ganadoresBorrador={ganadoresBorrador}
                     setGanadoresBorrador={setGanadoresBorrador}
+                    esSerieEquipos={esSerieEquipos}
+                    onAlinearPartido={onAlinearPartido}
+                    onResultadoPartido={onResultadoPartido}
                 />
             </div>
         )
@@ -2022,6 +2149,9 @@ function BracketLayout({
     ganadoresBorrador,
     setGanadoresBorrador,
     soloLectura = false,
+    esSerieEquipos = false,
+    onAlinearPartido,
+    onResultadoPartido,
 }: {
     rondas: [string, Partido[]][]
     arrastre: { partidoId: number; participanteId: number } | null
@@ -2030,6 +2160,10 @@ function BracketLayout({
     setGanadoresBorrador: React.Dispatch<React.SetStateAction<Record<number, number>>>
     /** Preview de solo lectura (mientras se arma la siembra). */
     soloLectura?: boolean
+    /** Torneo por equipos: cada cruce es una serie de 5 juegos. */
+    esSerieEquipos?: boolean
+    onAlinearPartido?: (partidoId: number) => void
+    onResultadoPartido?: (partidoId: number) => void
 }) {
     if (rondas.length === 0) return null
 
@@ -2103,6 +2237,9 @@ function BracketLayout({
                     ganadoresBorrador={ganadoresBorrador}
                     setGanadoresBorrador={setGanadoresBorrador}
                     soloLectura={soloLectura}
+                    esSerieEquipos={esSerieEquipos}
+                    onAlinearPartido={onAlinearPartido}
+                    onResultadoPartido={onResultadoPartido}
                 />
             </div>
         )
@@ -2119,6 +2256,9 @@ function BracketLayout({
                 ganadoresBorrador={ganadoresBorrador}
                 setGanadoresBorrador={setGanadoresBorrador}
                 soloLectura={soloLectura}
+                esSerieEquipos={esSerieEquipos}
+                onAlinearPartido={onAlinearPartido}
+                onResultadoPartido={onResultadoPartido}
             />
             <FinalColumn
                 final={finalPartido}
@@ -2128,6 +2268,9 @@ function BracketLayout({
                 ganadoresBorrador={ganadoresBorrador}
                 setGanadoresBorrador={setGanadoresBorrador}
                 soloLectura={soloLectura}
+                esSerieEquipos={esSerieEquipos}
+                onAlinearPartido={onAlinearPartido}
+                onResultadoPartido={onResultadoPartido}
             />
             <HalfBracket
                 lado="lower"
@@ -2138,6 +2281,9 @@ function BracketLayout({
                 ganadoresBorrador={ganadoresBorrador}
                 setGanadoresBorrador={setGanadoresBorrador}
                 soloLectura={soloLectura}
+                esSerieEquipos={esSerieEquipos}
+                onAlinearPartido={onAlinearPartido}
+                onResultadoPartido={onResultadoPartido}
             />
         </div>
     )
@@ -2155,6 +2301,9 @@ function HalfBracket({
     ganadoresBorrador,
     setGanadoresBorrador,
     soloLectura = false,
+    esSerieEquipos = false,
+    onAlinearPartido,
+    onResultadoPartido,
 }: {
     lado: 'upper' | 'lower'
     rondas: [string, Partido[]][]
@@ -2165,6 +2314,10 @@ function HalfBracket({
     ganadoresBorrador: Record<number, number>
     setGanadoresBorrador: React.Dispatch<React.SetStateAction<Record<number, number>>>
     soloLectura?: boolean
+    /** Torneo por equipos: cada cruce es una serie de 5 juegos. */
+    esSerieEquipos?: boolean
+    onAlinearPartido?: (partidoId: number) => void
+    onResultadoPartido?: (partidoId: number) => void
 }) {
     if (rondas.length === 0) return null
     return (
@@ -2193,6 +2346,9 @@ function HalfBracket({
                                         setArrastre(null)
                                     }}
                                     soloLectura={soloLectura}
+                                    esSerieEquipos={esSerieEquipos}
+                                    onAlinear={onAlinearPartido}
+                                    onResultado={onResultadoPartido}
                                 />
                             ))}
                         </div>
@@ -2215,6 +2371,9 @@ function FinalColumn({
     ganadoresBorrador,
     setGanadoresBorrador,
     soloLectura = false,
+    esSerieEquipos = false,
+    onAlinearPartido,
+    onResultadoPartido,
 }: {
     final: Partido | null
     partidosTodos: Partido[]
@@ -2223,6 +2382,10 @@ function FinalColumn({
     ganadoresBorrador: Record<number, number>
     setGanadoresBorrador: React.Dispatch<React.SetStateAction<Record<number, number>>>
     soloLectura?: boolean
+    /** Torneo por equipos: cada cruce es una serie de 5 juegos. */
+    esSerieEquipos?: boolean
+    onAlinearPartido?: (partidoId: number) => void
+    onResultadoPartido?: (partidoId: number) => void
 }) {
     return (
         <div className="flex flex-col items-center justify-center min-w-[220px] px-3">
@@ -2247,6 +2410,9 @@ function FinalColumn({
                             setArrastre(null)
                         }}
                         soloLectura={soloLectura}
+                        esSerieEquipos={esSerieEquipos}
+                        onAlinear={onAlinearPartido}
+                        onResultado={onResultadoPartido}
                     />
                 </div>
             )}
@@ -2264,6 +2430,9 @@ function LlaveCard({
     soloLectura = false,
     esperaLocal = false,
     esperaVisita = false,
+    esSerieEquipos = false,
+    onAlinear,
+    onResultado,
 }: {
     partido: Partido
     arrastre: { partidoId: number; participanteId: number } | null
@@ -2277,6 +2446,11 @@ function LlaveCard({
      *  puede confirmar nada aquí todavía. */
     esperaLocal?: boolean
     esperaVisita?: boolean
+    /** Torneo por equipos: el cruce es una serie; se juega juego a juego
+     *  con sus propios botones, sin arrastrar ganador. */
+    esSerieEquipos?: boolean
+    onAlinear?: (partidoId: number) => void
+    onResultado?: (partidoId: number) => void
 }) {
     // Partido fantasma: ambos lados null. Se finalizó sin ganador durante
     // la propagación de BYE (p.ej. 5 clasificados → cupo 8 deja huecos).
@@ -2301,11 +2475,15 @@ function LlaveCard({
     // Mientras un hueco espera rival no se puede confirmar ganador: el
     // partido de la ronda previa aún está vivo.
     const bloqueadoPorEspera = esperaLocal || esperaVisita
+    // En series por equipos el ganador NO se arrastra: sale de jugar los
+    // 5 juegos. Solo se ofrecen los botones Alineación / Resultado.
+    const cruceCompleto = hayLocal && hayVisita
+    const mostrarAccionesSerie = esSerieEquipos && cruceCompleto && !finalizado && !soloLectura
 
     return (
         <div
-            onDragOver={e => { if (!soloLectura && !bloqueadoPorEspera) e.preventDefault() }}
-            onDrop={() => { if (!soloLectura && !bloqueadoPorEspera) onDropGanador() }}
+            onDragOver={e => { if (!soloLectura && !bloqueadoPorEspera && !mostrarAccionesSerie) e.preventDefault() }}
+            onDrop={() => { if (!soloLectura && !bloqueadoPorEspera && !mostrarAccionesSerie) onDropGanador() }}
             className={`relative rounded-md border bg-surface shadow-sm transition-all min-h-16 ${
                 destacado ? 'border-warning shadow-warning/20' :
                 finalizado ? 'border-success' :
@@ -2328,10 +2506,10 @@ function LlaveCard({
                     return (
                         <div
                             key={i}
-                            draggable={!finalizado && !!pid && !soloLectura && !bloqueadoPorEspera}
-                            onDragStart={(e) => { if (!soloLectura && !bloqueadoPorEspera && pid) { arrastrarComoTarjeta(e); setArrastre({ partidoId: partido.id, participanteId: pid }) } }}
+                            draggable={!finalizado && !!pid && !soloLectura && !bloqueadoPorEspera && !mostrarAccionesSerie}
+                            onDragStart={(e) => { if (!soloLectura && !bloqueadoPorEspera && !mostrarAccionesSerie && pid) { arrastrarComoTarjeta(e); setArrastre({ partidoId: partido.id, participanteId: pid }) } }}
                             className={`flex items-center gap-1.5 text-xs leading-tight truncate py-0.5 ${
-                                !soloLectura ? 'cursor-grab' : ''
+                                !soloLectura && !mostrarAccionesSerie ? 'cursor-grab' : ''
                             } ${esGanador ? 'font-bold text-success' : 'text-fg'}`}
                             title={nombre(p)}
                         >
@@ -2353,13 +2531,36 @@ function LlaveCard({
                     Esperando rival…
                 </div>
             )}
-            {!finalizado && !soloLectura && !bloqueadoPorEspera && (
+            {!finalizado && !soloLectura && !bloqueadoPorEspera && !mostrarAccionesSerie && (
                 <div className={`mx-2 mb-2 p-1 text-center text-[10px] font-bold rounded border border-dashed ${
                     ganadorBorrador
                         ? 'text-warning border-warning bg-warning-soft/40'
                         : 'text-fg-muted border-line-strong'
                 }`}>
                     {ganadorBorrador ? 'Borrador' : 'Suelta ganador aquí'}
+                </div>
+            )}
+            {mostrarAccionesSerie && (
+                <div className="mx-2 mb-2 flex gap-1">
+                    <button
+                        type="button"
+                        onClick={() => onAlinear?.(partido.id)}
+                        title="Configurar quién juega cada posición (ABC vs XYZ)"
+                        className="flex-1 px-1 py-1 text-[10px] font-bold rounded border border-line-strong text-fg-muted hover:text-fg hover:bg-subtle transition-colors"
+                    >
+                        Alineación
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => onResultado?.(partido.id)}
+                        disabled={partido.detalles?.length === 0}
+                        title={partido.detalles?.length === 0
+                            ? 'Guarda la alineación primero para crear los juegos de la serie'
+                            : 'Registrar los juegos de la serie (al mejor de 5)'}
+                        className="flex-1 px-1 py-1 text-[10px] font-bold rounded border border-brand/40 text-brand hover:bg-brand/10 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+                    >
+                        Resultado
+                    </button>
                 </div>
             )}
             {campeon && (
