@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import PartidosResultadoModal from '@/components/ui/PartidosResultadoModal'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import PartidosGrupoModal, { GrupoLite } from '@/components/ui/PartidosGrupoModal'
 import ResolverEmpateModal from '@/components/ui/ResolverEmpateModal'
 import EncuentroEquiposWizardModal from '@/components/ui/EncuentroEquiposWizardModal'
@@ -18,6 +19,7 @@ import { fetchCache, obtenerCache, precargar } from '@/lib/fetchCache'
 import { imprimirAlineacionesBatch as importarEImprimirAlineacionBatch } from '@/lib/torneo/imprimirAlineacion'
 import { MATCHUPS_EQUIPOS, MATCHUPS_DOBLES } from '@/lib/torneo/matchups'
 import { alineacionDesdeDetalles, imprimirHojaPartidos } from '@/lib/torneo/hojaPartidos'
+import { enviarBorradoresJuegos, type BorradorJuego } from '@/lib/torneo/borradores-juegos'
 
 interface Categoria { id: number; nombre: string }
 interface Jugador { id: number; nombre: string }
@@ -248,6 +250,12 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
     const [generando, setGenerando] = useState(false)
     const [partidoResultadoId, setPartidoResultadoId] = useState<number | null>(null)
     const [borradores, setBorradores] = useState<Record<number, { sets: { local: number; visitante: number }[] }>>({})
+    /** Borradores de JUEGOS de serie (clave = detalle id), controlados aquí
+     *  para que sobrevivan al cierre del modal de resultados. */
+    const [borradoresJuegos, setBorradoresJuegos] = useState<Record<number, BorradorJuego>>({})
+    /** Diálogo al cerrar el modal padre habiendo borradores sin enviar. */
+    const [salirConBorradores, setSalirConBorradores] = useState(false)
+    const [cerrandoConEnvio, setCerrandoConEnvio] = useState(false)
     /** ID del grupo cuyo modal de partidos está abierto, o null si ninguno. */
     const [grupoModalId, setGrupoModalId] = useState<number | null>(null)
     /** ID del grupo cuyo modal de resolución de empate está abierto. */
@@ -375,6 +383,82 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                 sets: [],
             })),
         } : p))
+    }
+
+    /** Alineación de un detalle desde los partidos ya cargados (para enviar
+     *  borradores de juegos sin re-fetch). */
+    const resolverDetalleGrupos = (detalleId: number) => {
+        for (const p of partidos) {
+            const d = p.detalles.find(x => x.id === detalleId)
+            if (!d) continue
+            return {
+                partidoProgramadoId: p.id,
+                jugadoresLocalIds: d.jugadores.filter(j => j.lado === 'LOCAL').map(j => j.jugador_id),
+                jugadoresVisitanteIds: d.jugadores.filter(j => j.lado === 'VISITANTE').map(j => j.jugador_id),
+            }
+        }
+        return null
+    }
+
+    /** Parche optimista al enviarse juegos de serie: marca los detalles
+     *  FINALIZADO con sets calculados desde los borradores. */
+    const parcheJuegosEnviados = (partidoId: number, detalleIds: number[]) => {
+        setPartidos(prev => prev.map(p => p.id !== partidoId ? p : {
+            ...p,
+            detalles: p.detalles.map(d => {
+                if (!detalleIds.includes(d.id)) return d
+                const sets = borradoresJuegos[d.id]?.sets ?? []
+                const sl = sets.filter(s => s.local > s.visitante).length
+                const sv = sets.filter(s => s.visitante > s.local).length
+                return { ...d, estado: 'FINALIZADO' as const, sets_local: sl, sets_visitante: sv, sets: sets.map((s, i) => ({ numero: i + 1, puntos_local: s.local, puntos_visitante: s.visitante })) }
+            }),
+        }))
+    }
+
+    const numeroBorradoresJuegos = Object.keys(borradoresJuegos).length
+
+    /** Cierre del modal padre con borradores pendientes (partidos y/o
+     *  juegos): ofrece «Guardar y salir» en vez de perderlos de vista. */
+    const intentarCerrarPartidos = () => {
+        if (Object.keys(borradores).length > 0 || numeroBorradoresJuegos > 0) {
+            setSalirConBorradores(true)
+            return
+        }
+        onClose()
+    }
+
+    /** «Guardar y salir»: envía primero los borradores de partidos y luego
+     *  los de juegos; si algún juego falla, se queda abierto para revisar
+     *  (los de partidos que fallen los gestiona guardarBorradores con su
+     *  propio toast y permanecen en memoria). */
+    const cerrarGuardandoTodo = async () => {
+        if (!torneo) return onClose()
+        setCerrandoConEnvio(true)
+        try {
+            if (Object.keys(borradores).length > 0) await guardarBorradores()
+            let fallidosJuegos: { id: number; motivo: string }[] = []
+            if (numeroBorradoresJuegos > 0) {
+                const r = await enviarBorradoresJuegos({
+                    torneoId: torneo.id,
+                    borradores: borradoresJuegos,
+                    resolverDetalle: resolverDetalleGrupos,
+                })
+                fallidosJuegos = r.fallidos
+                if (r.guardados.length > 0) {
+                    setBorradoresJuegos(Object.fromEntries(
+                        Object.entries(borradoresJuegos).filter(([id]) => !r.guardados.includes(Number(id)))
+                    ))
+                }
+            }
+            setSalirConBorradores(false)
+            if (fallidosJuegos.length === 0) {
+                onClose()
+            } else {
+                toast.error(`${fallidosJuegos.length} juego${fallidosJuegos.length === 1 ? '' : 's'} con error: ${fallidosJuegos[0].motivo}. Quedan en borrador.`)
+            }
+        } finally {
+            setCerrandoConEnvio(false)
+        }
     }
 
     // Precarga silenciosa de TODAS las categorías del torneo al abrir:
@@ -866,7 +950,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         <>
             <Modal
                 isOpen={isOpen}
-                onClose={onClose}
+                onClose={intentarCerrarPartidos}
                 title="Partidos de grupos"
                 description={torneo.nombre}
                 size="full"
@@ -1119,6 +1203,9 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                     borradores={borradores}
                     onBorradoresChange={setBorradores}
                     onDeshacerLocal={deshacerPartidoLocal}
+                    borradoresJuegos={borradoresJuegos}
+                    onBorradoresJuegosChange={setBorradoresJuegos}
+                    onJuegosEnviados={parcheJuegosEnviados}
                     onPersist={() => {
                         cargar(true)
                     }}
@@ -1260,6 +1347,25 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                     />
                 )
             })()}
+
+            {/* Diálogo de salida con borradores sin enviar (partidos y/o
+                juegos de serie). */}
+            <ConfirmDialog
+                isOpen={salirConBorradores}
+                onClose={() => {
+                    setSalirConBorradores(false)
+                    // Salir sin guardar: los borradores permanecen en esta
+                    // pantalla mientras la página siga abierta.
+                    onClose()
+                }}
+                onConfirm={() => { void cerrarGuardandoTodo() }}
+                titulo="Borradores sin enviar"
+                descripcion={`Hay ${Object.keys(borradores).length + numeroBorradoresJuegos} resultado${(Object.keys(borradores).length + numeroBorradoresJuegos) === 1 ? '' : 's'} en borrador que NO se han guardado en la base de datos.`}
+                confirmLabel="Guardar y salir"
+                cancelLabel="Salir sin guardar"
+                variant="primary"
+                busy={cerrandoConEnvio}
+            />
         </>
     )
 }
