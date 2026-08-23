@@ -1,28 +1,21 @@
 /**
- * Descarga de archivos cross-browser con fallback para iOS Safari.
+ * Descarga de archivos cross-browser con soporte iOS.
  *
  * El patrón `<a download href={blob}>` funciona en Chrome/Firefox/Safari
- * desktop, pero en iOS Safari (móvil y desktop) tiene dos problemas:
+ * desktop, pero en iOS falla de varias formas:
  *
- *  - Para `Blob` URLs, `link.download` se ignora si el archivo no es
- *    una imagen (p.ej. PDFs) — Safari abre el archivo en una pestaña
- *    nueva en lugar de descargarlo.
- *  - Para `data:` URLs (data-URLs), `link.download` siempre se ignora
- *    en iOS Safari: la imagen se abre en una pestaña.
+ *  - `<a download>` se ignora para data:/blobs según versión → abre pestaña.
+ *  - `window.open(blobUrl)` tras trabajo asíncrono se bloquea como popup
+ *    y NO pasa nada (síntoma: "no guarda nada ni en Safari ni en Chrome").
  *
- * Estrategia:
- *  - Chrome/Firefox/desktop: `<a download href={blob}>` programático
- *    (mismo patrón que ya usa el código).
- *  - iOS Safari: `window.open(blobUrl, '_blank')` para que Safari lo
- *    abra; el usuario hace long-press → "Guardar" (imagen) o usa la
- *    opción de descarga del visor PDF (Safari iOS 13+ tiene un botón
- *    "Guardar" en el visor).
- *
- * El segundo parámetro `nombreArchivo` es la sugerencia del nombre
- * que Chrome/Firefox respetan; iOS lo ignora (usa el nombre derivado
- * de la URL).
+ * Estrategia en `descargarBlob`:
+ *  1) Web Share API con archivos (iOS 15+/Android/Edge): abre la hoja
+ *     nativa del sistema con "Guardar imagen" / "Guardar en Archivos".
+ *     Es la única vía 100% confiable en iOS.
+ *  2) Fallback desktop/iOS viejo: `<a download>` programático; en iOS,
+ *     apertura en nueva pestaña (con rescate si el popup fue bloqueado).
  */
-const isIOS = () => {
+const esIOS = () => {
     if (typeof navigator === 'undefined') return false
     const ua = navigator.userAgent
     if (/iPad|iPhone|iPod/.test(ua)) return true
@@ -30,11 +23,26 @@ const isIOS = () => {
     return navigator.platform === 'MacIntel' && (navigator.maxTouchPoints ?? 0) > 1
 }
 
+type NavigatorConShare = Navigator & {
+    canShare?: (data: ShareData) => boolean
+    share?: (data: ShareData) => Promise<void>
+}
+
 export function descargarArchivo(url: string, nombreArchivo: string): void {
-    if (isIOS()) {
+    if (esIOS()) {
         // iOS Safari ignora `<a download>`. Abrimos en nueva pestaña —
         // Safari muestra un botón de "Guardar" en su visor.
-        window.open(url, '_blank')
+        const win = window.open(url, '_blank')
+        if (!win) {
+            // Popup bloqueado (común tras awaits): enlace sintético como último recurso.
+            const enlace = document.createElement('a')
+            enlace.href = url
+            enlace.target = '_blank'
+            enlace.rel = 'noopener'
+            document.body.appendChild(enlace)
+            enlace.click()
+            enlace.remove()
+        }
         return
     }
 
@@ -50,15 +58,33 @@ export function descargarArchivo(url: string, nombreArchivo: string): void {
     }, 100)
 }
 
-/** Igual que `descargarArchivo` pero recibiendo un Blob. */
+/** Igual que `descargarArchivo` pero recibiendo un Blob. En iOS usa la hoja nativa de compartir. */
 export function descargarBlob(blob: Blob, nombreArchivo: string): void {
     const url = URL.createObjectURL(blob)
+    const liberar = () => setTimeout(() => URL.revokeObjectURL(url), esIOS() ? 30_000 : 1000)
+
+    // 1) Hoja nativa de compartir con archivos ("Guardar imagen" en iOS).
+    const nav = (typeof navigator !== 'undefined' ? navigator : undefined) as NavigatorConShare | undefined
+    if (nav?.share && nav.canShare) {
+        try {
+            const archivo = new File([blob], nombreArchivo, {
+                type: blob.type || 'application/octet-stream',
+            })
+            if (nav.canShare({ files: [archivo] })) {
+                nav.share({ files: [archivo], title: nombreArchivo })
+                    .catch(() => { /* el usuario cerró la hoja: no es un fallo */ })
+                    .finally(liberar)
+                return
+            }
+        } catch {
+            // Navegador raro: caemos al fallback clásico.
+        }
+    }
+
+    // 2) Fallback clásico por plataforma.
     try {
         descargarArchivo(url, nombreArchivo)
     } finally {
-        // Si iOS abrió una pestaña, el navegador aún referencia el blob;
-        // liberamos al rato para no acumular memoria. Si la pestaña está
-        // abierta y Safari aún renderiza, mantener un poco más.
-        setTimeout(() => URL.revokeObjectURL(url), isIOS() ? 30_000 : 100)
+        liberar()
     }
 }
