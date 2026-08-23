@@ -159,3 +159,43 @@ export async function PUT(request: Request, { params }: RouteParams) {
 }
 
 interface RouteParams { params: Promise<{ id: string; partidoId: string }> }
+
+/**
+ * POST = SOLO asegura que el encuentro tenga sus 5 sub-partidos
+ * (idempotente, no toca alineaciones ni resultados). Lo usa el modal de
+ * llaves ANTES de abrir el wizard: así el wizard siempre recibe los 5
+ * detalles y su payload nunca sale vacío.
+ */
+export async function POST(_request: Request, { params }: RouteParams) {
+    const unauthorized = await requireAuth()
+    if (unauthorized) return unauthorized
+
+    try {
+        const { id, partidoId } = await params
+        const torneoId = Number(id)
+        const programadoId = Number(partidoId)
+
+        const partido = await prisma.torneo_partidos_programados.findFirst({
+            where: { id: programadoId, torneo_id: torneoId },
+            include: { torneos: { select: { modalidad: true } } },
+        })
+        if (!partido) return NextResponse.json({ error: 'Partido no encontrado' }, { status: 404 })
+        if (partido.torneos.modalidad !== 'EQUIPOS' && partido.torneos.modalidad !== 'ATTA_TEAMS') {
+            return NextResponse.json({ error: 'La alineación solo aplica a torneos por equipos' }, { status: 400 })
+        }
+
+        await prisma.$transaction(async tx => {
+            await asegurarDetallesEncuentro(tx, programadoId)
+        })
+
+        const detalles = await prisma.torneo_partido_detalles.findMany({
+            where: { partido_programado_id: programadoId },
+            orderBy: { orden: 'asc' },
+            include: { jugadores: { include: { jugadores: true } } },
+        })
+        return NextResponse.json({ success: true, detalles })
+    } catch (error: unknown | any) {
+        console.error('Error al preparar los juegos del encuentro:', error)
+        return NextResponse.json({ error: 'No se pudo preparar la serie', detalles: (error as Error)?.message }, { status: 500 })
+    }
+}

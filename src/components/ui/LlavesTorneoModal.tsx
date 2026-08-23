@@ -291,8 +291,38 @@ export default function LlavesTorneoModal({
     const [borradoresSerie, setBorradoresSerie] = useState<Record<number, { sets: { local: number; visitante: number }[] }>>({})
     const [cargandoSerie, setCargandoSerie] = useState(false)
 
-    /** Abre el wizard ABC/XYZ para UN partido de llave. */
-    const abrirAlineacionLlave = (partidoId: number) => setWizardAlineacionId(partidoId)
+    /** Abre el wizard ABC/XYZ para UN partido de llave. Antes asegura
+     *  (idempotente, POST /alineacion) que el cruce tenga sus 5 juegos:
+     *  los brackets creados antes de las series por equipos no los tenían,
+     *  y sin ellos el wizard armaría un payload vacío y no guardaría nada.
+     *  La respuesta parchea el estado local para que el wizard reciba los
+     *  detalles al instante, sin esperar la recarga completa. */
+    const abrirAlineacionLlave = async (partidoId: number) => {
+        if (!torneo) return
+        try {
+            const r = await fetch(`/api/torneos/${torneo.id}/partidos/${partidoId}/alineacion`, { method: 'POST' })
+            const d = await r.json()
+            if (!r.ok) throw new Error(d.error || 'No se pudo preparar la serie')
+            const lista = partidos.map(p => p.id === partidoId ? {
+                ...p,
+                detalles: (d.detalles as Array<{ id: number; orden: number; tipo: string; jugadores: Array<{ jugador_id: number; lado: string; jugadores: { id: number; nombre: string } }> }>).map(det => ({
+                    id: det.id,
+                    orden: det.orden,
+                    tipo: det.tipo as 'DOBLES' | 'INDIVIDUAL',
+                    jugadores: det.jugadores.map(j => ({
+                        jugador_id: j.jugador_id,
+                        lado: j.lado as 'LOCAL' | 'VISITANTE',
+                        jugadores: { id: j.jugadores.id, nombre: j.jugadores.nombre },
+                    })),
+                })),
+            } : p)
+            setPartidos(lista)
+            espejarCachePartidos(lista)
+            setWizardAlineacionId(partidoId)
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Error al preparar la alineación')
+        }
+    }
 
     /** Abre el modal de serie: pide el partido completo (con sets de cada
      *  juego) al endpoint individual. */
@@ -2479,6 +2509,9 @@ function LlaveCard({
     // 5 juegos. Solo se ofrecen los botones Alineación / Resultado.
     const cruceCompleto = hayLocal && hayVisita
     const mostrarAccionesSerie = esSerieEquipos && cruceCompleto && !finalizado && !soloLectura
+    // ¿Ya se guardó una alineación para esta serie? Con que un juego tenga
+    // jugadores basta: se asignan los 5 juntos.
+    const alineacionHecha = (partido.detalles ?? []).some(d => d.jugadores.length > 0)
 
     return (
         <div
@@ -2546,9 +2579,13 @@ function LlaveCard({
                         type="button"
                         onClick={() => onAlinear?.(partido.id)}
                         title="Configurar quién juega cada posición (ABC vs XYZ)"
-                        className="flex-1 px-1 py-1 text-[10px] font-bold rounded border border-line-strong text-fg-muted hover:text-fg hover:bg-subtle transition-colors"
+                        className={`flex-1 px-1 py-1 text-[10px] font-bold rounded border transition-colors ${
+                            alineacionHecha
+                                ? 'border-success/50 text-success bg-success-soft/40 hover:bg-success-soft'
+                                : 'border-line-strong text-fg-muted hover:text-fg hover:bg-subtle'
+                        }`}
                     >
-                        Alineación
+                        {alineacionHecha ? 'Alineado ✓' : 'Alineación'}
                     </button>
                     <button
                         type="button"
