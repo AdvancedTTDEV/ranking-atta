@@ -1333,6 +1333,13 @@ export default function LlavesTorneoModal({
                 </div>
             )}
 
+            {cargandoSerie && (
+                <div className="banner banner-info mb-4 inline-flex items-center gap-2">
+                    <span className="inline-block h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                    Abriendo la serie del cruce…
+                </div>
+            )}
+
             {loading ? (
                 <CargandoPantalla titulo="Preparando bracket" mensajes={['Consultando llaves…', 'Cargando clasificados…', 'Armando los cruces…']} />
             ) : !hayLlaves ? (
@@ -1404,10 +1411,10 @@ export default function LlavesTorneoModal({
                 return (
                     <EncuentroEquiposWizardModal
                         isOpen
-                        onClose={() => {
-                            setWizardAlineacionId(null)
-                            cargar(undefined, true)
-                        }}
+                        // El refresco lo hace onGuardado (se dispara en todo
+                        // camino donde algo cambió); aquí solo cerramos para
+                        // no lanzar dos cargas paralelas que saturen red.
+                        onClose={() => setWizardAlineacionId(null)}
                         torneo={{ id: torneo.id, nombre: torneo.nombre }}
                         categoria={torneo.torneo_categorias.find(tc => tc.categorias.id === Number(categoriaId))?.categorias.nombre || ''}
                         grupoId={0}
@@ -1431,6 +1438,7 @@ export default function LlavesTorneoModal({
                             })) as never,
                         }]}
                         modalidad="EQUIPOS"
+                        imprimirAlGuardar={false}
                         onGuardado={() => cargar(undefined, true)}
                     />
                 )

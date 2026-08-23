@@ -85,10 +85,15 @@ interface Props {
     modalidad: 'DOBLES' | 'EQUIPOS'
     /** Callback al guardar exitosamente (para refrescar listas). */
     onGuardado?: () => void
+    /** false = NO abrir el diálogo de impresión al guardar (window.print
+     *  bloquea el DOM; los callers que ya tienen su propio flujo de hoja —
+     *  p. ej. llaves— deben pasar false). El botón manual sigue disponible. */
+    imprimirAlGuardar?: boolean
 }
 
 export default function EncuentroEquiposWizardModal({
     isOpen, onClose, torneo, categoria, grupoId, equipos, partidos, modalidad, onGuardado,
+    imprimirAlGuardar = true,
 }: Props) {
     const [step, setStep] = useState<WizardStep>('seleccion-lado')
     /** Qué equipo juega con el lado ABC. El otro juega XYZ. */
@@ -274,23 +279,25 @@ export default function EncuentroEquiposWizardModal({
                         + (omitidos > 0 ? ` (${omitidos} de otros cruces omitidos)` : ''),
             )
             // Último paso: el diálogo de impresión de la hoja se abre
-            // SOLO. Si el navegador bloquea la ventana, NO cerramos el
-            // wizard: queda un aviso y el botón «Imprimir hoja de
-            // partidos» a la vista para reintentar antes de salir.
-            try {
-                if (!generarHojaPartidos()) {
+            // SOLO si el caller lo pide (imprimirAlGuardar). window.print()
+            // bloquea el hilo del navegador; en llaves se omite para no
+            // congelar la página detrás del modal.
+            if (imprimirAlGuardar) {
+                try {
+                    if (!generarHojaPartidos()) {
+                        setImpresionFallida(true)
+                        toast.error('La alineación se guardó, pero el navegador bloqueó la impresión — usa «Imprimir hoja de partidos»')
+                        onGuardado?.()
+                        return
+                    }
+                    toast.success('Hoja enviada a impresión')
+                } catch (error) {
+                    console.error('Impresión automática de la hoja falló:', error)
+                    toast.error('La alineación se guardó, pero la hoja no se pudo imprimir — usa «Imprimir hoja de partidos»')
                     setImpresionFallida(true)
-                    toast.error('La alineación se guardó, pero el navegador bloqueó la impresión — usa «Imprimir hoja de partidos»')
                     onGuardado?.()
                     return
                 }
-                toast.success('Hoja enviada a impresión')
-            } catch (error) {
-                console.error('Impresión automática de la hoja falló:', error)
-                toast.error('La alineación se guardó, pero la hoja no se pudo imprimir — usa «Imprimir hoja de partidos»')
-                setImpresionFallida(true)
-                onGuardado?.()
-                return
             }
             // Cerramos el wizard al guardar: el feedback es el toast + la
             // lista actualizada con los estados de alineación al día.
