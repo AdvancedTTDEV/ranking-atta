@@ -85,15 +85,15 @@ interface Props {
     modalidad: 'DOBLES' | 'EQUIPOS'
     /** Callback al guardar exitosamente (para refrescar listas). */
     onGuardado?: () => void
-    /** false = NO abrir el diálogo de impresión al guardar (window.print
-     *  bloquea el DOM; los callers que ya tienen su propio flujo de hoja —
-     *  p. ej. llaves— deben pasar false). El botón manual sigue disponible. */
+    /** true = abrir el diálogo de impresión al guardar (window.print
+     *  bloquea el DOM). Por defecto NO imprime; los callers que quieran
+     *  la hoja automática deben pasar true. El botón manual sigue. */
     imprimirAlGuardar?: boolean
 }
 
 export default function EncuentroEquiposWizardModal({
     isOpen, onClose, torneo, categoria, grupoId, equipos, partidos, modalidad, onGuardado,
-    imprimirAlGuardar = true,
+    imprimirAlGuardar = false,
 }: Props) {
     const [step, setStep] = useState<WizardStep>('seleccion-lado')
     /** Qué equipo juega con el lado ABC. El otro juega XYZ. */
