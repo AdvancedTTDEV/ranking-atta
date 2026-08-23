@@ -56,6 +56,9 @@ interface Props {
      *  "Borrador" de la lista siga reflejándose cuando el modal está cerrado. */
     borradores: Record<number, { sets: { local: number; visitante: number }[] }>
     onBorradoresChange: (siguiente: Record<number, { sets: { local: number; visitante: number }[] }>) => void
+    /** Parche optimista tras «Deshacer»: el padre marca el partido (y sus
+     *  detalles de serie) como pendiente al instante, sin esperar el fetch. */
+    onDeshacerLocal?: (partidoId: number) => void
     onPersist?: () => void
 }
 
@@ -73,6 +76,7 @@ export default function PartidosResultadoModal({
     partidoInicialId,
     borradores,
     onBorradoresChange,
+    onDeshacerLocal,
     onPersist,
 }: Props) {
     const [seleccionadoId, setSeleccionadoId] = useState<number>(partidoInicialId)
@@ -274,6 +278,9 @@ export default function PartidosResultadoModal({
             const response = await fetch(`/api/torneos/${torneo.id}/partidos/${seleccionado.id}`, { method: 'DELETE' })
             const data = await response.json()
             if (!response.ok) throw new Error(data.error || 'No se pudo deshacer el resultado')
+            // Actualización al instante en la UI (el partido vuelve a
+            // pendiente aquí mismo); onPersist solo revalida por detrás.
+            onDeshacerLocal?.(seleccionado.id)
             toast.success('Resultado revertido')
             onPersist?.()
         } catch (error) {

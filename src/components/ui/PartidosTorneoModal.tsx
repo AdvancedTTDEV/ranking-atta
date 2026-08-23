@@ -356,6 +356,27 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
 
     useEffect(() => { if (isOpen && categoriaId) cargar() }, [isOpen, categoriaId])
 
+    /** Parche optimista tras «Deshacer resultado»: revierte el partido (y
+     *  los detalles de la serie, si es por equipos) en el estado local para
+     *  que el modal se actualice al instante. `cargar(true)` revalida el
+     *  resto (ranking/clasificaciones) por detrás. */
+    const deshacerPartidoLocal = (partidoId: number) => {
+        setPartidos(prev => prev.map(p => p.id === partidoId ? {
+            ...p,
+            estado: 'PENDIENTE' as const,
+            sets_local: 0,
+            sets_visitante: 0,
+            sets: [],
+            detalles: p.detalles.map(d => ({
+                ...d,
+                estado: 'PENDIENTE' as const,
+                sets_local: 0,
+                sets_visitante: 0,
+                sets: [],
+            })),
+        } : p))
+    }
+
     // Precarga silenciosa de TODAS las categorías del torneo al abrir:
     // alternar entre ellas pinta al instante desde la caché.
     useEffect(() => {
@@ -878,14 +899,19 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                         >
                             {generando ? 'Cargando…' : partidos.length ? 'Regenerar partidos' : 'Generar partidos'}
                         </Button>
-                        <Button
-                            variant="secondary"
-                            onClick={imprimir}
-                            disabled={partidos.length === 0}
-                            leadingIcon={<PrinterIcon className="h-4 w-4" />}
-                        >
-                            Imprimir hojas
-                        </Button>
+                        {/* «Imprimir hojas» (cédulas de partidos) solo tiene
+                            sentido en individual/dobles: en equipos la hoja
+                            oficial es la de alineaciones. */}
+                        {!(torneo?.modalidad === 'EQUIPOS' || torneo?.modalidad === 'ATTA_TEAMS') && (
+                            <Button
+                                variant="secondary"
+                                onClick={imprimir}
+                                disabled={partidos.length === 0}
+                                leadingIcon={<PrinterIcon className="h-4 w-4" />}
+                            >
+                                Imprimir hojas
+                            </Button>
+                        )}
                         {(torneo?.modalidad === 'DOBLES' || torneo?.modalidad === 'EQUIPOS' || torneo?.modalidad === 'ATTA_TEAMS') && (
                             <Button
                                 variant="secondary"
@@ -1092,6 +1118,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                     partidoInicialId={partidoResultadoId}
                     borradores={borradores}
                     onBorradoresChange={setBorradores}
+                    onDeshacerLocal={deshacerPartidoLocal}
                     onPersist={() => {
                         cargar(true)
                     }}
