@@ -163,7 +163,7 @@ const CSS_HOJA = `
     .cabecera-titulo{flex:1;text-align:center}
     .titulo-principal{font-size:24px;font-style:italic;font-weight:bold;letter-spacing:1px}
     .titulo-sub{font-size:12px;color:#475569;margin-top:1px;letter-spacing:.5px}
-    .mitad{flex:1;padding:8px 8px 4px;display:flex;flex-direction:column}
+    .mitad{flex:1;padding:8px 8px 66px;display:flex;flex-direction:column;position:relative;overflow:hidden}
     .mitad-titulo{font-size:36px;font-weight:bold;text-align:center;letter-spacing:6px;color:#0f172a;margin-bottom:4px}
     table.alineacion{width:100%;border-collapse:collapse;margin-bottom:6px}
     table.alineacion th,table.alineacion td{border:1.8px solid #0f172a;padding:0;font-size:14px;vertical-align:middle}
@@ -183,7 +183,9 @@ const CSS_HOJA = `
     .corte{display:flex;align-items:center;gap:6px;padding:6px 8px;color:#94a3b8}
     .corte-linea{flex:1;border-top:2px dashed #94a3b8}
     .corte-icono{font-size:11px;letter-spacing:1px;font-style:italic;color:#64748b;white-space:nowrap}
-    .orden-partidos{display:flex;flex-wrap:wrap;align-items:center;gap:3px 10px;border-top:1.5px dashed #cbd5e1;margin-top:auto;padding-top:6px;padding-left:4px;padding-right:4px}
+    /* Fija al fondo de CADA mitad (no de la página): aunque la tabla
+     * desborde, la tira siempre queda visible dentro del área imprimible. */
+    .orden-partidos{display:flex;flex-wrap:wrap;align-items:center;gap:3px 10px;border-top:1.5px dashed #cbd5e1;position:absolute;left:8px;right:8px;bottom:4px;padding-top:6px;padding-left:4px;padding-right:4px;background:#ffffff}
     .orden-titulo{font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:.8px;color:#0f172a;margin-right:2px}
     .orden-item{font-size:12.5px;font-weight:600;color:#334155;white-space:nowrap}
     .orden-item b{display:inline-block;background:#f1f5f9;border:1.5px solid #0f172a;border-radius:4px;padding:0 5px;margin-right:4px;font-size:11px;color:#0f172a}
