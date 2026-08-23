@@ -1548,7 +1548,7 @@ export default function LlavesTorneoModal({
                         : 'No se pudo crear el bracket. Verifica que los grupos estén finalizados.'}
                 </div>
             ) : (
-                <div className="bg-canvas rounded-xl p-6 overflow-x-auto">
+                <div className="bg-canvas rounded-xl p-3 sm:p-6 overflow-x-auto">
                     <ManualSiembraView
                         partidosR1={obtenerPrimeraRonda(partidos)}
                         siembra={siembra}
@@ -2193,7 +2193,7 @@ function ManualBracketR1({
                     />
                 ))}
             </div>
-            <div className="flex flex-col items-center justify-center min-w-[220px] px-3">
+        <div className="flex flex-col items-center justify-center min-w-[170px] sm:min-w-[220px] px-3">
                 <h3 className="text-center text-xs font-bold text-fg-muted uppercase tracking-wider mb-3 inline-flex items-center gap-1.5">
                     <TrophyIcon className="h-4 w-4 text-warning" />
                     Final
@@ -2489,7 +2489,7 @@ function BracketLayout({
     // ocupa todo el ancho centrada.
     if (cupo <= 2) {
         return (
-            <div className="flex justify-center">
+            <div className="w-max min-w-full mx-auto flex justify-center">
                 <FinalColumn
                     final={ultimaRonda[0] ?? null}
                     partidosTodos={partidosTodos}
@@ -2506,8 +2506,13 @@ function BracketLayout({
         )
     }
 
+    // `w-max min-w-full mx-auto` en vez de `justify-center`: con el bracket
+    // más ancho que la pantalla, el centrado flex deja el desborde IZQUIERDO
+    // fuera del alcance del scroll. Con este patrón, si sobra espacio se
+    // centra igual, y si no, se alinea a la izquierda y se puede recorrer
+    // todo el contenido hacia ambos lados (clave en mobile).
     return (
-        <div className="flex items-stretch justify-center gap-0">
+        <div className="w-max min-w-full mx-auto flex items-stretch gap-0">
             <HalfBracket
                 lado="upper"
                 rondas={upperRondas}
@@ -2586,7 +2591,7 @@ function HalfBracket({
             {rondas.map(([ronda, juegos], i) => {
                 const esRondaInicial = i === 0
                 return (
-                    <div key={ronda} className="flex flex-col justify-around min-w-[200px] px-2 py-1">
+                    <div key={ronda} className="flex flex-col justify-around min-w-[150px] sm:min-w-[200px] px-2 py-1">
                         <h3 className="text-center text-[10px] font-bold text-fg-muted uppercase tracking-wider mb-2">
                             {ronda}
                         </h3>
@@ -2774,18 +2779,35 @@ function LlaveCard({
                     // Cupo vacío: si aún puede llegar alguien es "Por definir";
                     // si su fuente ya cerró (o no existe) es pase directo.
                     const etiquetaVacio = espera ? 'Por definir' : 'BYE'
+                    // Interactivo = mismas condiciones que `draggable`. El clic
+                    // sirve en táctil (donde HTML5 drag no existe y el gesto
+                    // compite con el scroll): tocar jugador lo levanta, tocar
+                    // la zona «Suelta ganador aquí» lo confirma.
+                    const interactivo = !finalizado && !!pid && !soloLectura && !bloqueadoPorEspera && !mostrarAccionesSerie
+                    const seleccionado = interactivo && arrastre?.partidoId === partido.id && arrastre.participanteId === pid
                     return (
                         <div
                             key={i}
-                            draggable={!finalizado && !!pid && !soloLectura && !bloqueadoPorEspera && !mostrarAccionesSerie}
+                            draggable={interactivo}
                             onDragStart={(e) => { if (!soloLectura && !bloqueadoPorEspera && !mostrarAccionesSerie && pid) { arrastrarComoTarjeta(e); setArrastre({ partidoId: partido.id, participanteId: pid }) } }}
-                            className={`flex items-center gap-1.5 text-xs leading-tight truncate py-0.5 ${
-                                !soloLectura && !mostrarAccionesSerie ? 'cursor-grab' : ''
-                            } ${esGanador ? 'font-bold text-success' : 'text-fg'}`}
+                            onClick={() => {
+                                if (!interactivo || pid == null) return
+                                setArrastre(seleccionado ? null : { partidoId: partido.id, participanteId: pid })
+                            }}
+                            className={`flex items-center gap-1.5 text-xs leading-tight truncate py-0.5 rounded transition-colors touch-manipulation ${
+                                interactivo ? 'cursor-pointer' : ''
+                            } ${seleccionado ? 'bg-warning-soft ring-1 ring-warning' : ''} ${
+                                esGanador ? 'font-bold text-success' : 'text-fg'
+                            }`}
                             title={nombre(p)}
                         >
                             {esGanador && (
                                 <CheckBadgeIcon className="h-3.5 w-3.5 text-success shrink-0" />
+                            )}
+                            {seleccionado && (
+                                <span className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-warning bg-warning inline-flex items-center justify-center">
+                                    <CheckBadgeIcon className="h-2.5 w-2.5 text-white" />
+                                </span>
                             )}
                             {pid == null
                                 ? <span className="italic text-fg-muted font-semibold tracking-wide">{etiquetaVacio}</span>
@@ -2802,15 +2824,32 @@ function LlaveCard({
                     Esperando rival…
                 </div>
             )}
-            {!finalizado && !soloLectura && !bloqueadoPorEspera && !mostrarAccionesSerie && (
-                <div className={`mx-2 mb-2 p-1 text-center text-[10px] font-bold rounded border border-dashed ${
-                    ganadorBorrador
-                        ? 'text-warning border-warning bg-warning-soft/40'
-                        : 'text-fg-muted border-line-strong'
-                }`}>
-                    {ganadorBorrador ? 'Borrador' : 'Suelta ganador aquí'}
-                </div>
-            )}
+            {!finalizado && !soloLectura && !bloqueadoPorEspera && !mostrarAccionesSerie && (() => {
+                const arrastreAqui = arrastre?.partidoId === partido.id
+                const seleccionado = arrastreAqui
+                    ? [partido.participante_local, partido.participante_visitante].find(pp => pp?.id === arrastre?.participanteId)
+                    : null
+                return (
+                    <button
+                        type="button"
+                        onClick={onDropGanador}
+                        disabled={!arrastreAqui}
+                        className={`mx-2 mb-2 p-1 text-center text-[10px] font-bold rounded border border-dashed transition-colors touch-manipulation ${
+                            ganadorBorrador
+                                ? 'text-warning border-warning bg-warning-soft/40'
+                                : arrastreAqui
+                                    ? 'text-white border-warning bg-warning animate-pulse cursor-pointer'
+                                    : 'text-fg-muted border-line-strong'
+                        } ${arrastreAqui || ganadorBorrador ? '' : 'cursor-default'}`}
+                    >
+                        {ganadorBorrador
+                            ? 'Borrador · tocar para cambiar'
+                            : arrastreAqui
+                                ? `Confirmar a ${nombre(seleccionado ?? null)}`
+                                : 'Toca un jugador o suelta el ganador aquí'}
+                    </button>
+                )
+            })()}
             {mostrarAccionesSerie && (
                 <div className="mx-2 mb-2 flex gap-1">
                     <button
