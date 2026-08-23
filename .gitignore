@@ -50,3 +50,4 @@ resolve_migrations.mjs
 /prod.sql
 /*.xlsx
 backups/
+.env.prod
