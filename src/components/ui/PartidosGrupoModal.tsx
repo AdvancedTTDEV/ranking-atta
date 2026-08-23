@@ -83,6 +83,9 @@ interface Props {
     grupo: GrupoLite | null
     /** Borradores en memoria: si un partido.id está aquí, se marca como borrador. */
     borradores: Record<number, { sets: { local: number; visitante: number }[] }>
+    /** Juegos de serie en borrador (modalidad por equipos), indexados por
+     *  id de detalle. Sirve para marcar cruces con juegos sin enviar. */
+    borradoresJuegos?: Record<number, unknown>
     onSelectPartido: (partidoId: number) => void
     /** Abre el wizard de alineación para UN partido (modalidades por equipos). */
     onConfigurarAlineacionPartido?: (partidoId: number) => void
@@ -102,6 +105,7 @@ export default function PartidosGrupoModal({
     onClose,
     grupo,
     borradores,
+    borradoresJuegos,
     onSelectPartido,
     onConfigurarAlineacionPartido,
     onImprimirHojaPartido,
@@ -148,6 +152,18 @@ export default function PartidosGrupoModal({
     const haySiguiente = indiceGrupo < totalGrupos - 1
     const finalizados = grupo.partidos.filter(p => p.estado === 'FINALIZADO').length
     const conBorrador = grupo.partidos.filter(p => !!borradores[p.id]).length
+    // Juegos de serie en borrador (equipos): total del grupo y por cruce.
+    const juegosBorradoresPorPartido = new Map<number, number>()
+    let totalJuegosBorrador = 0
+    if (borradoresJuegos) {
+        for (const partido of grupo.partidos) {
+            const n = (partido.detalles ?? []).filter(d => borradoresJuegos[d.id] != null).length
+            if (n > 0) {
+                juegosBorradoresPorPartido.set(partido.id, n)
+                totalJuegosBorrador += n
+            }
+        }
+    }
     const permiteReordenar = !!onReordenar && grupo.partidos.some(p => p.estado !== 'FINALIZADO')
 
     const handleDragStart = (e: React.DragEvent, partidoId: number) => {
@@ -257,7 +273,7 @@ export default function PartidosGrupoModal({
             isOpen={isOpen}
             onClose={onClose}
             title={`Grupo ${grupo.numero} · ${grupo.partidos.length} cruce${grupo.partidos.length === 1 ? '' : 's'}`}
-            description={`${finalizados} finalizado${finalizados === 1 ? '' : 's'} · ${grupo.partidos.length - finalizados} pendiente${grupo.partidos.length - finalizados === 1 ? '' : 's'}${conBorrador > 0 ? ` · ${conBorrador} borrador${conBorrador === 1 ? '' : 'es'}` : ''}${permiteReordenar ? ' · arrastra el ≡ para reordenar' : ''}`}
+                        description={`${finalizados} finalizado${finalizados === 1 ? '' : 's'} · ${grupo.partidos.length - finalizados} pendiente${grupo.partidos.length - finalizados === 1 ? '' : 's'}${conBorrador > 0 ? ` · ${conBorrador} borrador${conBorrador === 1 ? '' : 'es'}` : ''}${totalJuegosBorrador > 0 ? ` · ${totalJuegosBorrador} juego${totalJuegosBorrador === 1 ? '' : 's'} sin enviar` : ''}${permiteReordenar ? ' · arrastra el ≡ para reordenar' : ''}`}
             size="lg"
             footer={
                 <>
@@ -393,6 +409,14 @@ export default function PartidosGrupoModal({
                                         <span className="inline-flex items-center gap-1">
                                             <ExclamationTriangleIcon className="h-3 w-3" />
                                             Borrador
+                                        </span>
+                                    </Badge>
+                                )}
+                                {!tieneBorrador && (juegosBorradoresPorPartido.get(partido.id) ?? 0) > 0 && (
+                                    <Badge variant="warning">
+                                        <span className="inline-flex items-center gap-1">
+                                            <ExclamationTriangleIcon className="h-3 w-3" />
+                                            {juegosBorradoresPorPartido.get(partido.id)} juego{(juegosBorradoresPorPartido.get(partido.id) ?? 0) === 1 ? '' : 's'} sin enviar
                                         </span>
                                     </Badge>
                                 )}

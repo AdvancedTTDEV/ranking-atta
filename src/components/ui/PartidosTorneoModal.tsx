@@ -1155,6 +1155,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                         onClose={() => setGrupoModalId(null)}
                         grupo={grupo}
                         borradores={borradores}
+                        borradoresJuegos={borradoresJuegos}
                         indiceGrupo={indiceGrupo}
                         totalGrupos={partidosPorGrupo.length}
                         onPrevGrupo={() => {
