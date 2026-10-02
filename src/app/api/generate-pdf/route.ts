@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
 import puppeteer from 'puppeteer-core'
-import chromium from '@sparticuz/chromium'
+import chromium, { inflate, setupLambdaEnvironment } from '@sparticuz/chromium'
 import { existsSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { requireAuth } from '@/lib/auth'
 
 export async function POST(req: Request) {
@@ -14,6 +16,14 @@ export async function POST(req: Request) {
 
         let executablePath: string
         if (isProduction) {
+            // @sparticuz/chromium solo extrae sus libs compartidas (libnspr4, libnss3...)
+            // cuando detecta Lambda/Vercel. En Railway no hay env vars de AWS, asi que
+            // las extraemos a mano y las anteponemos a LD_LIBRARY_PATH.
+            if (!process.env.VERCEL && !process.env.AWS_EXECUTION_ENV) {
+                const libDir = join(tmpdir(), 'al2023', 'lib')
+                setupLambdaEnvironment(libDir)
+                await inflate(join(process.cwd(), 'node_modules', '@sparticuz', 'chromium', 'bin', 'al2023.tar.br'))
+            }
             executablePath = await chromium.executablePath()
         } else {
             const chromeMacPath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
