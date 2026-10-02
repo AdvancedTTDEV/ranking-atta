@@ -58,10 +58,29 @@ export function descargarArchivo(url: string, nombreArchivo: string): void {
     }, 100)
 }
 
-/** Igual que `descargarArchivo` pero recibiendo un Blob. En iOS usa la hoja nativa de compartir. */
-export function descargarBlob(blob: Blob, nombreArchivo: string): void {
+/**
+ * Igual que `descargarArchivo` pero recibiendo un Blob. Por defecto usa la hoja nativa de compartir.
+ * Con `compartir: false` descarga directo con `<a download>` (iOS 13+ lo soporta para blobs).
+ */
+export function descargarBlob(
+    blob: Blob,
+    nombreArchivo: string,
+    { compartir = true }: { compartir?: boolean } = {},
+): void {
     const url = URL.createObjectURL(blob)
     const liberar = () => setTimeout(() => URL.revokeObjectURL(url), esIOS() ? 30_000 : 1000)
+
+    if (!compartir) {
+        const enlace = document.createElement('a')
+        enlace.href = url
+        enlace.download = nombreArchivo
+        enlace.rel = 'noopener'
+        document.body.appendChild(enlace)
+        enlace.click()
+        enlace.remove()
+        liberar()
+        return
+    }
 
     // 1) Hoja nativa de compartir con archivos ("Guardar imagen" en iOS).
     const nav = (typeof navigator !== 'undefined' ? navigator : undefined) as NavigatorConShare | undefined

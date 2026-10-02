@@ -161,7 +161,7 @@ export default function RankingSection({ className = '' }) {
 
             const blob = await pdfResponse.blob()
             const safeName = categoriaNombre.replace(/[^a-z0-9]/gi, '_')
-            descargarBlob(blob, `Ranking_ATTA_${safeName}_${mesAnioFile}.pdf`)
+            descargarBlob(blob, `Ranking_ATTA_${safeName}_${mesAnioFile}.pdf`, { compartir: false })
             toast.success('PDF descargado')
         } catch (error) {
             console.error('Error detallado:', error)
