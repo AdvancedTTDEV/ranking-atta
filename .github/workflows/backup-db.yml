@@ -4,6 +4,10 @@
 #   manualmente desde la pestaña "Run workflow".
 # - Cada dump se comprime (.sql.gz) y sube como artifact con retención de
 #   14 días: Actions → Backup BD → run → Artifacts.
+# - Las BDs de Railway son serverless: si están dormidas, la primera conexión
+#   las despierta pero Railway la corta ("Lost connection ... reading initial
+#   communication packet"). Por eso primero se despierta la BD con reintentos
+#   (hasta ~5 min) y el dump también se reintenta.
 # - Requiere estos secrets del repo (Settings → Secrets and variables → Actions):
 #     DB_PROD_HOST, DB_PROD_PORT, DB_PROD_USER, DB_PROD_PASSWORD
 #     DB_DEV_HOST,  DB_DEV_PORT,  DB_DEV_USER,  DB_DEV_PASSWORD
@@ -15,52 +19,73 @@ on:
   workflow_dispatch:
 
 jobs:
-  backup-prod:
+  backup:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # Que falle una base no cancela el backup de la otra.
+      fail-fast: false
+      matrix:
+        include:
+          - entorno: prod
+            clave: PROD
+          - entorno: dev
+            clave: DEV
+    env:
+      DB_HOST: ${{ secrets[format('DB_{0}_HOST', matrix.clave)] }}
+      DB_PORT: ${{ secrets[format('DB_{0}_PORT', matrix.clave)] }}
+      DB_USER: ${{ secrets[format('DB_{0}_USER', matrix.clave)] }}
+      # MYSQL_PWD evita pasar la contraseña por línea de comandos.
+      MYSQL_PWD: ${{ secrets[format('DB_{0}_PASSWORD', matrix.clave)] }}
     steps:
       - name: Instalar cliente MySQL
         run: sudo apt-get update -qq && sudo apt-get install -y -qq mysql-client >/dev/null
-      - name: Volcar base PROD
-        env:
-          DB_HOST: ${{ secrets.DB_PROD_HOST }}
-          DB_PORT: ${{ secrets.DB_PROD_PORT }}
-          DB_USER: ${{ secrets.DB_PROD_USER }}
-          DB_PASS: ${{ secrets.DB_PROD_PASSWORD }}
-        run: |
-          set -euo pipefail
-          TS=$(date +%Y%m%d_%H%M%S)
-          mysqldump --ssl-mode=DISABLED --single-transaction --routines --triggers \
-            -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" railway \
-            | gzip > "backup-prod-${TS}.sql.gz"
-          echo "Tamaño: $(du -h backup-prod-${TS}.sql.gz | cut -f1)"
-          # Verificación rápida: el dump debe terminar en "Dump completed"
-          gunzip -t "backup-prod-${TS}.sql.gz"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: backup-prod
-          path: backup-prod-*.sql.gz
-          retention-days: 14
 
-  backup-dev:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Instalar cliente MySQL
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq mysql-client >/dev/null
-      - name: Volcar base DEV
-        env:
-          DB_HOST: ${{ secrets.DB_DEV_HOST }}
-          DB_PORT: ${{ secrets.DB_DEV_PORT }}
-          DB_USER: ${{ secrets.DB_DEV_USER }}
-          DB_PASS: ${{ secrets.DB_DEV_PASSWORD }}
+      - name: Despertar BD (serverless)
         run: |
-          set -euo pipefail
+          if [ -z "$DB_HOST" ] || [ -z "$DB_PORT" ] || [ -z "$DB_USER" ]; then
+            echo "::error::Faltan secrets DB_${{ matrix.clave }}_* en el repo"
+            exit 1
+          fi
+          # Hasta 20 intentos cada 15 s (~5 min): cada intento fallido sigue
+          # despertando la instancia; en cuanto responde SELECT 1, seguimos.
+          for i in $(seq 1 20); do
+            if mysql --ssl-mode=DISABLED --connect-timeout=20 \
+                 -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -e 'SELECT 1' railway >/dev/null 2>&1; then
+              echo "BD despierta (intento $i)"
+              exit 0
+            fi
+            echo "Intento $i: la BD aún no responde, reintentando en 15 s…"
+            sleep 15
+          done
+          echo "::error::La BD ${{ matrix.entorno }} no respondió tras ~5 min"
+          exit 1
+
+      - name: Volcar base ${{ matrix.entorno }}
+        run: |
+          set -uo pipefail
           TS=$(date +%Y%m%d_%H%M%S)
-          mysqldump --ssl-mode=DISABLED --single-transaction --routines --triggers \
-            -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" railway \
-            | gzip > "backup-dev-${TS}.sql.gz"
-          gunzip -t "backup-dev-${TS}.sql.gz"
+          OUT="backup-${{ matrix.entorno }}-${TS}.sql.gz"
+          # Reintento por si la BD vuelve a dormirse o la conexión parpadea.
+          for i in 1 2 3; do
+            if mysqldump --ssl-mode=DISABLED --connect-timeout=20 \
+                 --single-transaction --quick --routines --triggers \
+                 -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" railway | gzip > "$OUT"; then
+              # Verificación: gzip íntegro y dump completo.
+              gunzip -t "$OUT" && gunzip -c "$OUT" | tail -n 1 | grep -q 'Dump completed' && {
+                echo "Tamaño: $(du -h "$OUT" | cut -f1)"
+                exit 0
+              }
+            fi
+            echo "Intento $i del dump falló, reintentando en 30 s…"
+            rm -f "$OUT"
+            sleep 30
+          done
+          echo "::error::No se pudo volcar la BD ${{ matrix.entorno }}"
+          exit 1
+
       - uses: actions/upload-artifact@v4
         with:
-          name: backup-dev
-          path: backup-dev-*.sql.gz
+          name: backup-${{ matrix.entorno }}
+          path: backup-${{ matrix.entorno }}-*.sql.gz
           retention-days: 14

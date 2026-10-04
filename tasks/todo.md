@@ -26,3 +26,16 @@
 
 ## Review
 _(se completa al terminar)_
+
+---
+
+# Tarea: backups de GitHub Actions nunca terminan (BD serverless dormida)
+
+- [x] Diagnóstico: todas las corridas fallan en ~15 s con `mysqldump: Got error: 2013: Lost connection to MySQL
+      server at 'reading initial communication packet'`: la BD de Railway está dormida y corta la 1ª conexión.
+- [x] Paso "Despertar BD": `SELECT 1` con reintentos (20 × 15 s ≈ 5 min).
+- [x] Dump con 3 reintentos + verificación (`gunzip -t` y la última línea `Dump completed`).
+- [x] Jobs prod/dev unificados en una matriz (`fail-fast: false`), `MYSQL_PWD` en vez de `-p` en la línea
+      de comandos, error explícito si faltan secrets.
+- [x] Verificado con mysql/mysqldump simulados: espera a que despierte, reintenta y rechaza dumps truncados.
+- [ ] Verificar en GitHub: Actions → Backup BD → Run workflow (tras el merge a main).
