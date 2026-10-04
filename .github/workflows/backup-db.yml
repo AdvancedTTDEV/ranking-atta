@@ -6,8 +6,9 @@
 #   14 días: Actions → Backup BD → run → Artifacts.
 # - Las BDs de Railway son serverless: si están dormidas, la primera conexión
 #   las despierta pero Railway la corta ("Lost connection ... reading initial
-#   communication packet"). Por eso primero se despierta la BD con reintentos
-#   (hasta ~5 min) y el dump también se reintenta.
+#   communication packet") y el proxy TCP público no la despierta. Por eso
+#   primero se llama a /api/dbStarter de la app (consulta por red privada) y
+#   se reintenta hasta ~5 min; el dump también se reintenta.
 # - Requiere estos secrets del repo (Settings → Secrets and variables → Actions):
 #     DB_PROD_HOST, DB_PROD_PORT, DB_PROD_USER, DB_PROD_PASSWORD
 #     DB_DEV_HOST,  DB_DEV_PORT,  DB_DEV_USER,  DB_DEV_PASSWORD
@@ -37,6 +38,11 @@ jobs:
       DB_USER: ${{ secrets[format('DB_{0}_USER', matrix.clave)] }}
       # MYSQL_PWD evita pasar la contraseña por línea de comandos.
       MYSQL_PWD: ${{ secrets[format('DB_{0}_PASSWORD', matrix.clave)] }}
+      # App que usa esa BD: su /api/dbStarter hace una consulta desde la red
+      # privada de Railway, que es lo que despierta la BD (el proxy TCP
+      # público no la despierta). Configurable con las variables del repo
+      # APP_PROD_URL / APP_DEV_URL; sin URL se salta el paso HTTP.
+      APP_URL: ${{ matrix.clave == 'PROD' && (vars.APP_PROD_URL || 'https://advancedtabletennis.up.railway.app') || vars.APP_DEV_URL }}
     steps:
       - name: Instalar cliente MySQL
         run: sudo apt-get update -qq && sudo apt-get install -y -qq mysql-client >/dev/null
@@ -47,9 +53,14 @@ jobs:
             echo "::error::Faltan secrets DB_${{ matrix.clave }}_* en el repo"
             exit 1
           fi
-          # Hasta 20 intentos cada 15 s (~5 min): cada intento fallido sigue
-          # despertando la instancia; en cuanto responde SELECT 1, seguimos.
+          # Hasta 20 intentos cada 15 s (~5 min). En cada uno se llama primero
+          # a /api/dbStarter de la app (despierta app + BD por red privada) y
+          # luego se prueba SELECT 1 por el proxy público; si responde, seguimos.
           for i in $(seq 1 20); do
+            if [ -n "${APP_URL:-}" ]; then
+              RESP=$(curl -s --max-time 60 "$APP_URL/api/dbStarter" || true)
+              echo "dbStarter: ${RESP:-sin respuesta}"
+            fi
             if ERR=$(mysql --ssl-mode=DISABLED --connect-timeout=20 \
                  -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -e 'SELECT 1' railway 2>&1 >/dev/null); then
               echo "BD despierta (intento $i)"
