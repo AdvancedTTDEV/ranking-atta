@@ -50,12 +50,12 @@ jobs:
           # Hasta 20 intentos cada 15 s (~5 min): cada intento fallido sigue
           # despertando la instancia; en cuanto responde SELECT 1, seguimos.
           for i in $(seq 1 20); do
-            if mysql --ssl-mode=DISABLED --connect-timeout=20 \
-                 -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -e 'SELECT 1' railway >/dev/null 2>&1; then
+            if ERR=$(mysql --ssl-mode=DISABLED --connect-timeout=20 \
+                 -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -e 'SELECT 1' railway 2>&1 >/dev/null); then
               echo "BD despierta (intento $i)"
               exit 0
             fi
-            echo "Intento $i: la BD aún no responde, reintentando en 15 s…"
+            echo "Intento $i: la BD aún no responde ($ERR), reintentando en 15 s…"
             sleep 15
           done
           echo "::error::La BD ${{ matrix.entorno }} no respondió tras ~5 min"
