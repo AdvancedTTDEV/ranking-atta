@@ -73,6 +73,11 @@ export async function POST(request: Request) {
   const abierto = Boolean(data.abierto)
   // Clase Sub 21: los resultados de este torneo no afectan el ELO.
   const sub21 = Boolean(data.sub21)
+  // Llaves separadas por posición de grupo (2 o 3). ATTA Teams ya usa 3
+  // fijas, así que para esa modalidad no se persiste.
+  const llavesPorPosicion = modalidad !== 'ATTA_TEAMS' && [2, 3].includes(Number(data.llavesPorPosicion))
+    ? Number(data.llavesPorPosicion)
+    : null
 
   if (!modalidadesValidas.includes(modalidad)) {
     return NextResponse.json({ message: 'Modalidad de torneo inválida' }, { status: 400 })
@@ -103,6 +108,7 @@ export async function POST(request: Request) {
         modalidad,
         abierto,
         sub21,
+        llaves_por_posicion: llavesPorPosicion,
         torneo_categorias: {
           create: categoriasAsignadas.map((catId: number) => ({
             categoria_id: catId

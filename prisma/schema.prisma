@@ -135,6 +135,11 @@ model torneos {
   // Clase "Sub 21": los resultados del torneo NO afectan el ELO/ranking
   // (no se invoca el SP procesar_partido ni su reverso).
   sub21                Boolean                @default(false)
+  // Llaves separadas por posición de grupo: NULL = una sola llave (top 2
+  // de cada grupo); 2 o 3 = esa cantidad de llaves, donde la llave n toma
+  // al n-ésimo de cada grupo (`torneo_partidos_programados.nivel_llave`).
+  // ATTA_TEAMS siempre usa 3 (ver `nivelesLlave` en src/lib/torneo.ts).
+  llaves_por_posicion  Int?
   historial_categorias historial_categorias[]
   jugadores            jugadores[]
   participaciones      participaciones[]

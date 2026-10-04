@@ -19,7 +19,7 @@ import NavegacionModales, { DestinoModal } from '@/components/ui/NavegacionModal
 import CargandoPantalla from '@/components/ui/CargandoPantalla'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
-import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
+import { categoriasParaSelector, esTorneoAbiertoTotal, nivelesLlave } from '@/lib/torneo'
 import { matchupsEstandar } from '@/lib/torneo/matchups'
 import { abrirImpresion, construirDocLlaves, descargarPngDeDoc, prefiereModoOscuro, type RondaLlaveDoc } from '@/lib/documentos-torneo'
 import { arrastrarComoTarjeta } from '@/lib/ui/arrastrar-como-tarjeta'
@@ -57,11 +57,15 @@ type Partido = {
         jugadores: { jugador_id: number; lado: 'LOCAL' | 'VISITANTE'; jugadores: Jugador }[]
     }>
 }
+/** Niveles posibles de llave por posición (ver `nivelesLlave`). */
+const NIVELES = [1, 2, 3] as const
+
 type Torneo = {
     id: number
     nombre: string
     modalidad?: string
     abierto?: boolean
+    llaves_por_posicion?: number | null
     torneo_categorias: { categorias: { id: number; nombre: string } }[]
 }
 
@@ -236,8 +240,8 @@ export default function LlavesTorneoModal({
      * tenga que arrastrar los clasificados a las posiciones del bracket.
      */
     const [pool, setPool] = useState<PoolItem[]>([])
-    // Caché de datos por "categoría-nivel" (ATTA Teams): al abrir el modal
-    // se precargan las tres llaves en paralelo y el cambio de pestaña pinta
+    // Caché de datos por "torneo-categoría-nivel" (llaves por posición): al
+    // abrir el modal se precargan todas las llaves en paralelo y el cambio de pestaña pinta
     // al instante desde esta caché sin volver a golpear la BD. Va en un ref
     // (no estado) para que invalidar + recargar sea síncrono: con useState,
     // cargar() veía la entrada aún viva y pintaba datos rancios.
@@ -277,10 +281,13 @@ export default function LlavesTorneoModal({
     // o si el usuario lo marcó como abierto al crearlo (columna `abierto`).
     // En INDIVIDUAL sin marca `abierto`, el selector se mantiene.
     const esAbierto = esTorneoAbiertoTotal(torneo?.modalidad, torneo?.abierto)
-    // ATTA Teams: tres llaves paralelas salen de cada grupo. El usuario
-    // alterna entre ellas con estas pestañas; cada una se carga, siembra
+    // Llaves por posición (ATTA Teams o `llaves_por_posicion`): varias
+    // llaves paralelas salen de cada grupo (la n toma a los n-ésimos). El
+    // usuario alterna entre ellas con pestañas; cada una se carga, siembra
     // y confirma por separado.
     const esAttaTeams = torneo?.modalidad === 'ATTA_TEAMS'
+    const niveles = nivelesLlave(torneo)
+    const llavesPorPosicion = niveles > 1
     const [nivel, setNivel] = useState<1 | 2 | 3>(1)
     const nivelRef = useRef<1 | 2 | 3>(1)
     useEffect(() => { nivelRef.current = nivel }, [nivel])
@@ -560,8 +567,9 @@ export default function LlavesTorneoModal({
         }
     }
 
-    /** Clave de caché: los datos son por categoría Y por nivel de llave. */
-    const claveCache = (n: number) => `${categoriaId}:${n}`
+    /** Clave de caché: los datos son por torneo, categoría Y nivel de llave
+     *  (varios torneos comparten categoría, p. ej. "primera" en ATTA Teams). */
+    const claveCache = (n: number) => `${torneo?.id}:${categoriaId}:${n}`
 
     /** Descarta la copia cacheada de un nivel (tras una mutación local). */
     const invalidarCache = (n: number) => {
@@ -631,6 +639,9 @@ export default function LlavesTorneoModal({
     useEffect(() => {
         if (!torneo) {
             setCategoriaId('')
+            // Al cerrar: el próximo torneo arranca en su primera llave (puede
+            // tener menos llaves por posición que el anterior).
+            setNivel(1)
             return
         }
         if (esAbierto) {
@@ -669,9 +680,9 @@ export default function LlavesTorneoModal({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     categoriaId: Number(categoriaId),
-                    clasificanPorGrupo: esAttaTeams ? 3 : 2,
+                    clasificanPorGrupo: llavesPorPosicion ? niveles : 2,
                     vacio: true,
-                    ...(esAttaTeams ? { nivel: nivelObjetivo } : {})
+                    ...(llavesPorPosicion ? { nivel: nivelObjetivo } : {})
                 }),
             })
             const d = await r.json()
@@ -710,7 +721,7 @@ export default function LlavesTorneoModal({
     const pedirDatos = async (n: 1 | 2 | 3, silencioso: boolean): Promise<{ partidos: Partido[]; pool: PoolItem[] } | null> => {
         // Pedimos también `detalles` para poder mostrar el botón
         // "ABC/XYZ" en partidos de llave DOBLES/EQUIPOS.
-        const sufijoNivel = esAttaTeams ? `&nivel=${n}` : ''
+        const sufijoNivel = llavesPorPosicion ? `&nivel=${n}` : ''
         let r = await fetch(`/api/torneos/${torneo!.id}/llaves?categoriaId=${categoriaId}&withPool=true&withDetalles=true${sufijoNivel}`)
         let d = await r.json()
         if (!r.ok) throw new Error(d.error)
@@ -737,7 +748,7 @@ export default function LlavesTorneoModal({
 
         // Caché lista: cambio de pestaña instantáneo, sin red. En modo fondo
         // SIEMPRE vamos a la BD (reconciliación post-guardado).
-        const cacheado = !fondo && esAttaTeams ? cacheNiveles.current[claveCache(n)] : undefined
+        const cacheado = !fondo && llavesPorPosicion ? cacheNiveles.current[claveCache(n)] : undefined
         if (cacheado) {
             if (!silencioso) aplicarDatos(cacheado)
             return
@@ -768,21 +779,21 @@ export default function LlavesTorneoModal({
     useEffect(() => {
         if (isOpen && categoriaId) cargar()
         // cargar es estable por convención; las dependencias son isOpen,
-        // categoriaId y nivel (ATTA Teams). Con la caché por nivel, cambiar
+        // categoriaId y nivel (llaves por posición). Con la caché por nivel, cambiar
         // de pestaña pinta al instante sin reconsultar.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen, categoriaId, nivel])
 
-    // Precarga en paralelo los niveles que falten (ATTA Teams) para que
+    // Precarga en paralelo los niveles que falten (llaves por posición) para que
     // cambiar de pestaña no espere a la BD. Se lanza al abrir o cambiar de
     // categoría; no depende de `nivel` a propósito.
     useEffect(() => {
-        if (!isOpen || !categoriaId || !esAttaTeams) return
-        for (const n of [1, 2, 3] as const) {
+        if (!isOpen || !categoriaId || !llavesPorPosicion) return
+        for (const n of NIVELES.slice(0, niveles)) {
             if (!cacheNiveles.current[claveCache(n)]) cargar(n)
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isOpen, categoriaId, esAttaTeams])
+    }, [isOpen, categoriaId, niveles, torneo?.id])
 
     // ── Lógica del modo manual de siembra ─────────────────────────────────
 
@@ -966,7 +977,7 @@ export default function LlavesTorneoModal({
                 body: JSON.stringify({
                     categoriaId: Number(categoriaId),
                     partidos: partidosPayload,
-                    ...(esAttaTeams ? { nivel } : {})
+                    ...(llavesPorPosicion ? { nivel } : {})
                 })
             })
             const d = await r.json()
@@ -988,7 +999,8 @@ export default function LlavesTorneoModal({
         if (!torneo || !categoriaId) return
         setIsDeletingLlaves(true)
         try {
-            const r = await fetch(`/api/torneos/${torneo.id}/llaves/reordenar?categoriaId=${categoriaId}${esAttaTeams ? `&nivel=${nivel}` : ''}`, {
+            const sufijo = llavesPorPosicion ? `&nivel=${nivel}` : ''
+            const r = await fetch(`/api/torneos/${torneo.id}/llaves/reordenar?categoriaId=${categoriaId}${sufijo}`, {
                 method: 'DELETE'
             })
             const d = await r.json()
@@ -1050,7 +1062,7 @@ export default function LlavesTorneoModal({
                 body: JSON.stringify({
                     categoriaId: Number(categoriaId),
                     partidos: payloadPartidos,
-                    ...(esAttaTeams ? { nivel } : {})
+                    ...(llavesPorPosicion ? { nivel } : {})
                 }),
             })
             const d = await r.json()
@@ -1208,7 +1220,7 @@ export default function LlavesTorneoModal({
         const cat = categorias.find(c => c.id.toString() === categoriaId)?.nombre ?? ''
         const etiquetaNivel = esAttaTeams
             ? (nivel === 1 ? 'Primera categoría (1º)' : nivel === 2 ? 'Segunda categoría (2º)' : 'Tercera categoría (3º)')
-            : null
+            : llavesPorPosicion ? `Llave de ${nivel}º de grupo` : null
         return construirDocLlaves({
             torneoNombre: torneo.nombre,
             // En ATTA Teams la etiqueta de nivel YA es la categoría
@@ -1237,9 +1249,10 @@ export default function LlavesTorneoModal({
             const ancho = Math.max(900, cantidadRondas * 255 + 420)
             // En ATTA Teams los tres brackets comparten la categoría interna
             // ("primera"); el nombre del archivo distingue por nivel.
+            const nombreCategoria = categorias.find(c => c.id.toString() === categoriaId)?.nombre ?? categoriaId
             const sufijoArchivo = esAttaTeams
                 ? `-${nivel === 1 ? 'primera' : nivel === 2 ? 'segunda' : 'tercera'}-categoria`
-                : `-${categorias.find(c => c.id.toString() === categoriaId)?.nombre ?? categoriaId}`
+                : llavesPorPosicion ? `-${nombreCategoria}-llave-${nivel}` : `-${nombreCategoria}`
             await descargarPngDeDoc(doc, ancho, `llaves-${torneo?.nombre}${sufijoArchivo}.png`, oscuro ? '#0B1120' : '#ffffff')
             toast.success('Imagen descargada')
         } catch (error) {
@@ -1430,12 +1443,12 @@ export default function LlavesTorneoModal({
                             ))}
                         </Select>
                     )}
-                    {esAttaTeams && (
+                    {llavesPorPosicion && (
                         <div className="flex flex-wrap items-end gap-3 flex-1">
                             <div>
                                 <span className="label">Llave</span>
                                 <div className="flex rounded-md border border-line overflow-hidden">
-                                    {([1, 2, 3] as const).map(n => (
+                                    {NIVELES.slice(0, niveles).map(n => (
                                         <button
                                             key={n}
                                             type="button"
@@ -1446,13 +1459,24 @@ export default function LlavesTorneoModal({
                                                     : 'text-fg-muted hover:text-fg hover:bg-subtle'
                                             }`}
                                         >
-                                            {n === 1 ? '1ª categoría' : n === 2 ? '2ª categoría' : '3ª categoría'}
+                                            {esAttaTeams ? `${n}ª categoría` : `${n}º de grupo`}
                                         </button>
                                     ))}
                                 </div>
                             </div>
                             <div className="banner banner-info text-xs flex-1 min-w-[220px]">
-                                Cada llave toma una posición de cada grupo: el 1º a <b>Primera categoría</b>, el 2º a <b>Segunda</b> y el 3º a <b>Tercera</b>.
+                                {esAttaTeams ? (
+                                    <>
+                                        Cada llave toma una posición de cada grupo: el 1º a <b>Primera categoría</b>,
+                                        el 2º a <b>Segunda</b> y el 3º a <b>Tercera</b>.
+                                    </>
+                                ) : (
+                                    <>
+                                        Llaves separadas: cada llave toma una posición de cada grupo (los <b>1º</b> a
+                                        la primera llave, los <b>2º</b> a la segunda
+                                        {niveles === 3 && <>, los <b>3º</b> a la tercera</>}).
+                                    </>
+                                )}
                             </div>
                         </div>
                     )}

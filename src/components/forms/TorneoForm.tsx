@@ -26,6 +26,8 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
     const [categorias, setCategorias] = useState<Categoria[]>([])
     const [abierto, setAbierto] = useState(false)
     const [sub21, setSub21] = useState(false)
+    // '' = una sola llave; '2' | '3' = llaves separadas por posición de grupo.
+    const [llavesPorPosicion, setLlavesPorPosicion] = useState('')
 
     useEffect(() => {
         const fetchCategorias = async () => {
@@ -77,6 +79,7 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
             abierto,
             categorias: categoriasAEnviar,
             sub21,
+            llavesPorPosicion: modalidad === 'ATTA_TEAMS' ? null : (Number(llavesPorPosicion) || null),
         }
         try {
             const response = await fetch('/api/torneos', {
@@ -128,6 +131,17 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
                     <option value="REGULAR">Regular</option>
                     <option value="SUB21">Sub 21 (no vale para ELO)</option>
                 </Select>
+                {modalidad !== 'ATTA_TEAMS' && (
+                    <Select
+                        label="Llaves"
+                        value={llavesPorPosicion}
+                        onChange={(e) => setLlavesPorPosicion(e.target.value)}
+                    >
+                        <option value="">Una llave (1º y 2º de cada grupo)</option>
+                        <option value="2">2 llaves por posición (1ºs y 2ºs separados)</option>
+                        <option value="3">3 llaves por posición (1ºs, 2ºs y 3ºs separados)</option>
+                    </Select>
+                )}
                 <Input
                     label="Fecha"
                     type="date"

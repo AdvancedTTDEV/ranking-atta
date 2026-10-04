@@ -50,8 +50,8 @@ export async function PUT(request: Request, { params }: RouteParams) {
             partidos: { id: number; participante_local_id: number | null; participante_visitante_id: number | null }[]
             nivel?: number | null
         }
-        // ATTA Teams: scopea todas las operaciones a la llave del nivel
-        // (1=Primera categoría, 2=Segunda, 3=Tercera) para no mezclar las tres llaves.
+        // Llaves por posición (ATTA Teams o `llaves_por_posicion`): scopea
+        // todas las operaciones a la llave del nivel para no mezclar llaves.
         const nivelLlave = nivel ? Number(nivel) : null
         const filtroNivel = nivelLlave ? { nivel_llave: nivelLlave } : {}
         if (!torneoId || !categoriaId) {

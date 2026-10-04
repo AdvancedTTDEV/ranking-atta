@@ -3,7 +3,7 @@ import prisma from '@/lib/prisma'
 interface OpcionesByes {
     torneoId: number
     categoriaId: number
-    /** ATTA Teams: scopea a la llave del nivel (1=Primera categoría, 2=Segunda, 3=Tercera). */
+    /** Llaves por posición (ATTA Teams o `llaves_por_posicion`): scopea a la llave del nivel n. */
     nivelLlave?: number | null
 }
 

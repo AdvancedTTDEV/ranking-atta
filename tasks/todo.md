@@ -14,15 +14,33 @@
 - [x] Identificado (según el usuario, vía subagente): torneo EQUIPOS creado como ATTA_TEAMS para tener llaves
       separadas; de las 3 llaves solo se usaron 2 (1ros → llave 1, 2dos → llave 2)
 - [ ] Confirmar: ATTA Teams se queda como modalidad propia (solo se separa la feature de llaves)
-- [ ] Consultar prod (solo lectura): torneo afectado, su `modalidad` y sus llaves por `nivel_llave`
-- [ ] Rama `feature/llaves-por-posicion`: opción por torneo "llaves separadas por posición" (2 o 3 llaves),
+- [ ] Consultar prod (solo lectura) — NO hecho: no hay credenciales locales (.env.prod); queda en el script SQL: torneo afectado, su `modalidad` y sus llaves por `nivel_llave`
+- [x] Rama `feature/llaves-por-posicion`: opción por torneo "llaves separadas por posición" (2 o 3 llaves),
       para cualquier modalidad, sin depender de `ATTA_TEAMS`. ATTA Teams la usa con 3.
       Se mantiene la columna `nivel_llave` (NULL = una sola llave, como antes).
-- [ ] "Restaurar lo anterior": dejar el torneo afectado como estaba (modalidad original y una sola llave)
+- [x] "Restaurar lo anterior": dejar el torneo afectado como estaba (modalidad original y una sola llave)
       vía script SQL revisado, sin reescribir el historial de `main`
-- [ ] Verificar: `npm run build`, comparar comportamiento entre `main` y la feature
+- [x] Verificar: `npm run build`, comparar comportamiento entre `main` y la feature
       (torneo normal = 1 llave; torneo con opción = N llaves)
 - [ ] Commit `CLAUDE.md` + `tasks/` en `main`; push de la feature y PR (sin merge directo)
 
+## Diseño (aprobado "adelante con el plan", 2026-10-04)
+- `torneos.llaves_por_posicion INT NULL` (migración): NULL = una llave (top 2 por grupo); 2|3 = N llaves,
+  la llave n toma al n-ésimo de cada grupo. ATTA_TEAMS siempre = 3 (sin cambiar su comportamiento).
+- `nivelesLlave(torneo)` en `src/lib/torneo.ts` (client-safe) → única fuente de verdad para UI y API.
+- API `llaves` POST valida `nivel` contra `nivelesLlave` del torneo (no `[1,2,3]` fijo).
+- `LlavesTorneoModal`: las pestañas/caché/`nivel` se activan con `nivelesLlave > 1` en vez de `esAttaTeams`;
+  ATTA conserva sus etiquetas "1ª/2ª/3ª categoría", el resto usa "Llave 1ºs / 2ºs / 3ºs".
+- `TorneoForm` + POST `/api/torneos`: selector "Llaves" (una / 2 / 3 por posición) salvo en ATTA Teams.
+- `scripts/restaurar-torneo-llaves-por-posicion.sql`: torneo afectado → `EQUIPOS` + `llaves_por_posicion = 2`.
+
 ## Review
-_(se completa al terminar)_
+- `tsc --noEmit` OK, `npm run build` OK; eslint sin errores nuevos (los 4 errores de LlavesTorneoModal ya existían).
+- `nivelesLlave` y el reparto por posición verificados con un script (11 casos).
+- NO verificado end-to-end en la app: no hay BD local. Probar en dev/preview tras aplicar la migración.
+- Bug previo corregido de paso: la caché de llaves no incluía el torneo en la clave (dos torneos ATTA que
+  comparten "primera" podían mostrar llaves del otro).
+- ⚠ Orden de despliegue: aplicar la migración `20261004120000_llaves_por_posicion` en la BD ANTES de desplegar
+  el código (Prisma lee todas las columnas de `torneos`; sin la columna fallaría el listado de torneos).
+- Limitación: la opción solo se elige al crear el torneo (no hay edición de torneos); los existentes se
+  ajustan con el script SQL.

@@ -70,6 +70,21 @@ export function esTorneoAbiertoTotal(
     return modalidad === 'DOBLES' || modalidad === 'EQUIPOS' || modalidad === 'ATTA_TEAMS'
 }
 
+/**
+ * Cantidad de llaves paralelas por categoría. Con más de una, la llave n
+ * toma al n-ésimo clasificado de cada grupo (`nivel_llave = n`).
+ *   - ATTA_TEAMS: siempre 3 (1ros → Primera, 2dos → Segunda, 3ros → Tercera).
+ *   - Resto: `llaves_por_posicion` (2 o 3) o 1 si es NULL (llave única).
+ */
+export function nivelesLlave(torneo?: {
+    modalidad?: torneo_modalidad | string
+    llaves_por_posicion?: number | null
+} | null): number {
+    if (torneo?.modalidad === 'ATTA_TEAMS') return 3
+    const n = torneo?.llaves_por_posicion
+    return n === 2 || n === 3 ? n : 1
+}
+
 // Orden estable: primera > segunda > tercera > cuarta, y al final cualquier
 // otro nombre en orden alfabético.
 const ORDEN_NOMBRE: Record<string, number> = {

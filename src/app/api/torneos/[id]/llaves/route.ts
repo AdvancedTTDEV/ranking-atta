@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { PosicionManual, calcularClasificacionGrupo } from '@/lib/empates'
 import { asegurarDetallesEncuentro } from '@/lib/torneo/partidos'
 import { requireAuth } from '@/lib/auth'
+import { nivelesLlave } from '@/lib/torneo'
 
 interface Params { params: Promise<{ id: string }> }
 const siguientePotenciaDos = (n: number) => 2 ** Math.ceil(Math.log2(Math.max(2, n)))
@@ -23,9 +24,9 @@ export async function GET(request: Request, { params }: Params) {
 
   const { id } = await params
   const categoriaId = Number(new URL(request.url).searchParams.get('categoriaId'))
-  // ATTA Teams: las tres llaves paralelas (1=Primera categoría, 2=Segunda, 3=Tercera)
-  // conviven bajo la misma categoría ancla. Si llega `nivel` filtramos
-  // solo esa llave; si no, devolvemos todas (modalidades clásicas).
+  // Llaves por posición (ATTA Teams o `llaves_por_posicion`): las llaves
+  // paralelas conviven bajo la misma categoría. Si llega `nivel` filtramos
+  // solo esa llave; si no, devolvemos todas (llave única).
   const nivelParam = new URL(request.url).searchParams.get('nivel')
   const nivel = nivelParam ? Number(nivelParam) : null
   // Si el cliente pide también los detalles (para abrir el wizard de
@@ -140,7 +141,7 @@ export async function GET(request: Request, { params }: Params) {
       manualPorGrupo.get(grupo.id) || new Map()
     )
     orden.slice(0, nivel ? 3 : CLASIFICAN_POR_GRUPO_DEFAULT).forEach((participanteId, index) => {
-      // En ATTA Teams el pool de cada llave es UNA posición por grupo
+      // Con llaves por posición el pool de cada llave es UNA posición por grupo
       // (nivel 1 → los 1ros, nivel 2 → los 2dos, nivel 3 → los 3ros).
       if (nivel && index + 1 !== nivel) return
       const t = grupo.participantes.find(p => p.torneo_participantes.id === participanteId)?.torneo_participantes
@@ -163,21 +164,24 @@ export async function POST(request: Request, { params }: Params) {
   try {
     const { id } = await params
     const torneoId = Number(id)
-    // `nivel` solo llega en ATTA Teams: genera UNA llave con los
-    // clasificados en esa posición de cada grupo (1=Primera categoría, 2=Segunda, 3=Tercera).
+    // `nivel` solo llega en torneos con llaves por posición (ATTA Teams o
+    // `llaves_por_posicion`): genera UNA llave con los clasificados en esa
+    // posición de cada grupo (nivel 1 → los 1ros, 2 → los 2dos, 3 → los 3ros).
     const { categoriaId, clasificanPorGrupo = 2, vacio = false, nivel = null } = await request.json()
     const nivelLlave = nivel ? Number(nivel) : null
-    if (nivelLlave !== null && ![1, 2, 3].includes(nivelLlave)) {
-      return NextResponse.json({ error: 'Nivel de llave inválido' }, { status: 400 })
-    }
     // En torneos por equipos cada partido de llave es una SERIE (5 juegos),
     // así que al crear el bracket le generamos sus detalles de una vez.
     const torneo = await prisma.torneos.findUnique({
       where: { id: torneoId },
-      select: { modalidad: true },
+      select: { modalidad: true, llaves_por_posicion: true },
     })
+    const niveles = nivelesLlave(torneo)
+    const nivelValido = niveles > 1 && Number.isInteger(nivelLlave) && nivelLlave! >= 1 && nivelLlave! <= niveles
+    if (nivelLlave !== null && !nivelValido) {
+      return NextResponse.json({ error: 'Nivel de llave inválido' }, { status: 400 })
+    }
     const esPorEquipos = torneo?.modalidad === 'EQUIPOS' || torneo?.modalidad === 'ATTA_TEAMS'
-    // En ATTA Teams cada llave toma exactamente 1 clasificado por grupo.
+    // Con llaves por posición cada llave toma exactamente 1 clasificado por grupo.
     const clasificanEfectivo = nivelLlave ? 1 : Number(clasificanPorGrupo)
     const grupos = await prisma.torneo_grupos.findMany({
       where: { torneo_id: torneoId, categoria_id: Number(categoriaId) },
@@ -243,8 +247,8 @@ export async function POST(request: Request, { params }: Params) {
         const ids = grupo.participantes.map(item => item.torneo_participante_id)
         const partidosDelGrupo = resultados.filter(p => p.grupo_id === grupo.id)
         const { orden } = calcularClasificacionGrupo(ids, partidosDelGrupo, manualPorGrupo.get(grupo.id) || new Map())
-        // ATTA Teams: de cada grupo entra SOLO el clasificado en la
-        // posición del nivel (1º → Primera categoría, 2º → Segunda, 3º → Tercera).
+        // Llaves por posición: de cada grupo entra SOLO el clasificado en
+        // la posición del nivel (1º → llave 1, 2º → llave 2, 3º → llave 3).
         return nivelLlave ? orden.slice(nivelLlave - 1, nivelLlave) : orden.slice(0, clasificanEfectivo)
       })
       // Distribución de cruces: los BYE se reparten entre los
@@ -280,8 +284,8 @@ export async function POST(request: Request, { params }: Params) {
       }
     }
     await prisma.$transaction(async tx => {
-      // En ATTA Teams solo se regenera la llave del nivel pedido; las
-      // otras dos quedan intactas. En modalidades clásicas el borrado
+      // Con llaves por posición solo se regenera la llave del nivel pedido;
+      // las demás quedan intactas. En modalidades clásicas el borrado
       // por nivel NULL equivale a "todas".
       await tx.torneo_partidos_programados.deleteMany({
         where: {
