@@ -14,6 +14,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import PartidosGrupoModal, { GrupoLite } from '@/components/ui/PartidosGrupoModal'
 import ResolverEmpateModal from '@/components/ui/ResolverEmpateModal'
 import EncuentroEquiposWizardModal from '@/components/ui/EncuentroEquiposWizardModal'
+import CalendarioLigaFechas from '@/components/ui/CalendarioLigaFechas'
 import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
 import { fetchCache, obtenerCache, precargar } from '@/lib/fetchCache'
 import { imprimirAlineacionesBatch as importarEImprimirAlineacionBatch } from '@/lib/torneo/imprimirAlineacion'
@@ -66,6 +67,8 @@ interface ClasificacionGrupo {
 interface Partido {
     id: number
     orden: number
+    /** Solo liga: número de fecha del calendario. */
+    fecha_numero: number | null
     sets_local: number
     sets_visitante: number
     estado: 'PENDIENTE' | 'FINALIZADO'
@@ -1117,9 +1120,11 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                             <Button
                                 variant="primary"
                                 onClick={onOpenLlaves}
+                                disabled={!!torneo?.liga && (partidos.length === 0 || partidos.some(p => p.estado !== 'FINALIZADO'))}
+                                title={torneo?.liga ? 'Disponible cuando todos los encuentros estén finalizados' : undefined}
                                 leadingIcon={<TrophyIcon className="h-4 w-4" />}
                             >
-                                Ver llaves
+                                {torneo?.liga ? 'Final' : 'Ver llaves'}
                             </Button>
                         )}
                         <Button
@@ -1178,7 +1183,24 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                             grupoFiltroId={grupoModalId}
                             borradoresPorGrupo={borradoresPorGrupo}
                             onResolverEmpate={(grupoId) => setGrupoResolucionId(grupoId)}
-                            clasifican={torneo?.modalidad === 'ATTA_TEAMS' ? 3 : 2}
+                            clasifican={torneo?.liga ? 1 : torneo?.modalidad === 'ATTA_TEAMS' ? 3 : 2}
+                        />
+                    )}
+
+                    {!loading && torneo?.liga && partidos.length > 0 && (
+                        <CalendarioLigaFechas
+                            partidos={partidos.map(p => ({
+                                id: p.id,
+                                fecha_numero: p.fecha_numero,
+                                grupo: p.torneo_grupos?.numero_grupo ?? null,
+                                local: nombreParticipante(p.participante_local),
+                                visitante: nombreParticipante(p.participante_visitante),
+                                estado: p.estado,
+                                sets_local: p.sets_local,
+                                sets_visitante: p.sets_visitante,
+                            }))}
+                            onResultado={setPartidoResultadoId}
+                            onAlineacion={setWizardPartidoId}
                         />
                     )}
 
@@ -1254,7 +1276,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                                 ? imprimirHojaDePartido
                                 : undefined
                         }
-                        onReordenar={async (nuevoOrdenIds) => {
+                        onReordenar={torneo?.liga ? undefined : async (nuevoOrdenIds) => {
                             if (!torneo || !categoriaId) return false
                             try {
                                 const res = await fetch(`/api/torneos/${torneo.id}/partidos/reordenar`, {
