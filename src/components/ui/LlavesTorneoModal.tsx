@@ -21,7 +21,7 @@ import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
 import { matchupsEstandar } from '@/lib/torneo/matchups'
-import { abrirImpresion, construirDocLlaves, descargarPngDeDoc, prefiereModoOscuro, type RondaLlaveDoc } from '@/lib/documentos-torneo'
+import { abrirImpresion, construirDocLlaves, construirDocLlavesHairline, descargarPngDeDoc, type RondaLlaveDoc } from '@/lib/documentos-torneo'
 import { arrastrarComoTarjeta } from '@/lib/ui/arrastrar-como-tarjeta'
 import { enviarBorradoresJuegos, type BorradorJuego } from '@/lib/torneo/borradores-juegos'
 type Club = { id: number; nombre: string }
@@ -1203,13 +1203,14 @@ export default function LlavesTorneoModal({
             }))
     }
 
-    const construirDoc = (oscuro: boolean) => {
+    const construirDoc = (oscuro: boolean, hairline = false) => {
         if (!torneo) return null
         const cat = categorias.find(c => c.id.toString() === categoriaId)?.nombre ?? ''
         const etiquetaNivel = esAttaTeams
             ? (nivel === 1 ? 'Primera categoría (1º)' : nivel === 2 ? 'Segunda categoría (2º)' : 'Tercera categoría (3º)')
             : null
-        return construirDocLlaves({
+        const construir = hairline ? construirDocLlavesHairline : construirDocLlaves
+        return construir({
             torneoNombre: torneo.nombre,
             // En ATTA Teams la etiqueta de nivel YA es la categoría
             // (Primera/Segunda/Tercera); mostrar además "Categoría X"
@@ -1217,30 +1218,22 @@ export default function LlavesTorneoModal({
             categoriaNombre: esAttaTeams ? '' : cat,
             etiquetaNivel,
             rondas: construirRondasDoc(),
-            oscuro,
+            ...(hairline ? {} : { oscuro }),
         })
     }
 
     const handleDescargar = async () => {
-        // El "screenshot" sale con el modo de la compu: oscuro si la app/sistema
-        // está en oscuro, claro en caso contrario.
-        const oscuro = prefiereModoOscuro()
-        const doc = construirDoc(oscuro)
+        // El PNG usa siempre el estilo hairline oscuro.
+        const doc = construirDoc(true, true)
         if (!doc) return
         setDescargando(true)
         try {
-            // Ancho fijo: el doc va en mitades espejadas (como la página):
-            // ~255px por columna + 250px de la final al centro. Así el PNG
-            // incluye TODAS las rondas aunque en pantalla el bracket se
-            // desplace horizontalmente (móvil).
-            const cantidadRondas = new Set(partidos.map(p => p.ronda_eliminacion || 'Ronda')).size
-            const ancho = Math.max(900, cantidadRondas * 255 + 420)
             // En ATTA Teams los tres brackets comparten la categoría interna
             // ("primera"); el nombre del archivo distingue por nivel.
             const sufijoArchivo = esAttaTeams
                 ? `-${nivel === 1 ? 'primera' : nivel === 2 ? 'segunda' : 'tercera'}-categoria`
                 : `-${categorias.find(c => c.id.toString() === categoriaId)?.nombre ?? categoriaId}`
-            await descargarPngDeDoc(doc, ancho, `llaves-${torneo?.nombre}${sufijoArchivo}.png`, oscuro ? '#0B1120' : '#ffffff')
+            await descargarPngDeDoc(doc, null, `llaves-${torneo?.nombre}${sufijoArchivo}.png`, '#0B1120')
             toast.success('Imagen descargada')
         } catch (error) {
             console.error('Error al descargar:', error)
