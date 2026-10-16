@@ -89,16 +89,19 @@ export async function PUT(request: Request, { params }: RouteParams) {
         const detallesFinalizados = await prisma.torneo_partido_detalles.findMany({
             where: { partido_programado_id: programadoId, estado: 'FINALIZADO' }, select: { ganador_lado: true }
         })
+        // Victorias necesarias = mayoría de los juegos de la serie (3 de 5, 4 de 7).
+        const totalDetalles = await prisma.torneo_partido_detalles.count({ where: { partido_programado_id: programadoId } })
+        const mayoria = Math.floor(totalDetalles / 2) + 1
         const victoriasLocal = detallesFinalizados.filter(item => item.ganador_lado === 'LOCAL').length
         const victoriasVisitante = detallesFinalizados.filter(item => item.ganador_lado === 'VISITANTE').length
-        const serieCerrada = victoriasLocal === 3 || victoriasVisitante === 3
+        const serieCerrada = victoriasLocal >= mayoria || victoriasVisitante >= mayoria
         await prisma.torneo_partidos_programados.update({
             where: { id: programadoId },
             data: {
                 sets_local: victoriasLocal,
                 sets_visitante: victoriasVisitante,
                 ...(serieCerrada ? {
-                    ganador_participante_id: victoriasLocal === 3 ? detalle.partido_programado.participante_local_id : detalle.partido_programado.participante_visitante_id,
+                    ganador_participante_id: victoriasLocal >= mayoria ? detalle.partido_programado.participante_local_id : detalle.partido_programado.participante_visitante_id,
                     estado: 'FINALIZADO'
                 } : {})
             }
@@ -110,7 +113,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
             serieCerrada && detalle.partido_programado.fase === 'ELIMINACION'
             && detalle.partido_programado.siguiente_partido_id && detalle.partido_programado.siguiente_lado
         ) {
-            const ganadorId = victoriasLocal === 3 ? detalle.partido_programado.participante_local_id : detalle.partido_programado.participante_visitante_id
+            const ganadorId = victoriasLocal >= mayoria ? detalle.partido_programado.participante_local_id : detalle.partido_programado.participante_visitante_id
             await prisma.torneo_partidos_programados.update({
                 where: { id: detalle.partido_programado.siguiente_partido_id },
                 data: detalle.partido_programado.siguiente_lado === 'LOCAL'
