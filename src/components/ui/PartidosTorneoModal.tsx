@@ -17,7 +17,7 @@ import EncuentroEquiposWizardModal from '@/components/ui/EncuentroEquiposWizardM
 import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
 import { fetchCache, obtenerCache, precargar } from '@/lib/fetchCache'
 import { imprimirAlineacionesBatch as importarEImprimirAlineacionBatch } from '@/lib/torneo/imprimirAlineacion'
-import { MATCHUPS_EQUIPOS, MATCHUPS_DOBLES } from '@/lib/torneo/matchups'
+import { matchupsEstandar, modalidadSerie } from '@/lib/torneo/matchups'
 import { alineacionDesdeDetalles, imprimirHojaPartidos } from '@/lib/torneo/hojaPartidos'
 import { enviarBorradoresJuegos, type BorradorJuego } from '@/lib/torneo/borradores-juegos'
 
@@ -769,7 +769,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         // Ej: partido 1 = A+B vs X+Y → solo imprime A, B (locales) y X, Y (visitantes).
         const modalidadEquipos = torneo.modalidad === 'DOBLES' || torneo.modalidad === 'EQUIPOS' || torneo.modalidad === 'ATTA_TEAMS'
         const matchups = modalidadEquipos
-            ? (torneo.modalidad === 'DOBLES' ? MATCHUPS_DOBLES : MATCHUPS_EQUIPOS)
+            ? matchupsEstandar(modalidadSerie(torneo))
             : []
         // Resolución local de letra → jugador. Busca el detalle del partido
         // cuyo matchup incluye esa letra (en el orden local/visitante) y
@@ -784,7 +784,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         //
         // La LETRA de cada jugador se deriva del `orden` y del matchup de
         // ese detalle (índice del detalle dentro del partido = índice del
-        // matchup en MATCHUPS_EQUIPOS/DOBLES).
+        // matchup en matchupsEstandar).
         const jugadorPorSlot = (
             partido: Partido,
             lado: 'LOCAL' | 'VISITANTE',
@@ -1010,7 +1010,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
         const partido = partidos.find(p => p.id === partidoId)
         if (!torneo || !partido) return
         if (!(torneo.modalidad === 'DOBLES' || torneo.modalidad === 'EQUIPOS' || torneo.modalidad === 'ATTA_TEAMS')) return
-        const modalidadWizard = torneo.modalidad === 'DOBLES' ? ('DOBLES' as const) : ('EQUIPOS' as const)
+        const modalidadWizard = modalidadSerie(torneo)
         const alineacion = alineacionDesdeDetalles(partido.detalles, modalidadWizard)
         if (!alineacion) {
             toast.error('Este encuentro no tiene alineación guardada — entra a «Alineación» para configurarla')
@@ -1104,7 +1104,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                                         torneo: { nombre: torneo.nombre },
                                         categoria: cat,
                                         cantidadPartidos: partidos.length,
-                                        modalidad: torneo.modalidad === 'DOBLES' ? ('DOBLES' as const) : ('EQUIPOS' as const),
+                                        modalidad: modalidadSerie(torneo),
                                     })
                                     if (!ok) toast.error('El navegador bloqueó la ventana de impresión')
                                 }}
@@ -1434,7 +1434,7 @@ export default function PartidosTorneoModal({ isOpen, onClose, torneo, onOpenLla
                                 })),
                             })) as any,
                         }]}
-                        modalidad={torneo.modalidad === 'DOBLES' ? 'DOBLES' : 'EQUIPOS'}
+                        modalidad={modalidadSerie(torneo)}
                         onGuardado={() => cargar(true)}
                     />
                 )
