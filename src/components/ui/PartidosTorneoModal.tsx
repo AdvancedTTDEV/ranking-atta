@@ -81,6 +81,7 @@ interface Torneo {
     nombre: string
     modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS' | 'ATTA_TEAMS'
     abierto?: boolean
+    liga?: boolean
     torneo_categorias: { categorias: Categoria }[]
 }
 interface Props { isOpen: boolean; onClose: () => void; torneo: Torneo | null; onOpenLlaves?: () => void; onNavegar?: (destino: DestinoModal) => void }

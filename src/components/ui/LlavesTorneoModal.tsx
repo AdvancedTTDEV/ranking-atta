@@ -62,6 +62,7 @@ type Torneo = {
     nombre: string
     modalidad?: string
     abierto?: boolean
+    liga?: boolean
     torneo_categorias: { categorias: { id: number; nombre: string } }[]
 }
 

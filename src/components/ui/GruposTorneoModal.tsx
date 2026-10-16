@@ -37,7 +37,7 @@ interface TorneoGrupoParticipante { id: number; posicion: number; torneo_partici
 interface TorneoGrupo { id: number; numero_grupo: number; participantes: TorneoGrupoParticipante[] }
 interface Categoria { id: number; nombre: string }
 interface TorneoCategoria { categorias: Categoria }
-interface Torneo { id: number; nombre: string; modalidad?: string; abierto?: boolean; torneo_categorias: TorneoCategoria[] }
+interface Torneo { id: number; nombre: string; modalidad?: string; abierto?: boolean; liga?: boolean; torneo_categorias: TorneoCategoria[] }
 
 interface GruposTorneoModalProps {
     isOpen: boolean
@@ -629,7 +629,10 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                     )}
 
                     {/* Tamaño de grupo (solo en modo automático) */}
-                    {modo === 'auto' && (
+                    {modo === 'auto' && torneo?.liga && (
+                        <div className="banner banner-info text-xs">Liga: 2 grupos</div>
+                    )}
+                    {modo === 'auto' && !torneo?.liga && (
                         <Select
                             label="Jugadores por grupo"
                             value={tamañoGrupo.toString()}
