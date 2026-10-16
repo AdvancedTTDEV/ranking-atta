@@ -20,7 +20,7 @@ import CargandoPantalla from '@/components/ui/CargandoPantalla'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { categoriasParaSelector, esTorneoAbiertoTotal } from '@/lib/torneo'
-import { matchupsEstandar } from '@/lib/torneo/matchups'
+import { matchupsEstandar, modalidadSerie as modalidadSerieDe } from '@/lib/torneo/matchups'
 import { abrirImpresion, construirDocLlaves, descargarPngDeDoc, prefiereModoOscuro, type RondaLlaveDoc } from '@/lib/documentos-torneo'
 import { arrastrarComoTarjeta } from '@/lib/ui/arrastrar-como-tarjeta'
 import { enviarBorradoresJuegos, type BorradorJuego } from '@/lib/torneo/borradores-juegos'
@@ -671,7 +671,8 @@ export default function LlavesTorneoModal({
                 body: JSON.stringify({
                     categoriaId: Number(categoriaId),
                     clasificanPorGrupo: esAttaTeams ? 3 : 2,
-                    vacio: true,
+                    // Liga: la final se siembra sola con el 1º de cada grupo.
+                    vacio: !torneo.liga,
                     ...(esAttaTeams ? { nivel: nivelObjetivo } : {})
                 }),
             })
@@ -1269,8 +1270,7 @@ export default function LlavesTorneoModal({
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 
-        const modalidadSerie = torneo.modalidad === 'DOBLES' ? 'DOBLES' : 'EQUIPOS'
-        const matchups = matchupsEstandar(modalidadSerie)
+        const matchups = matchupsEstandar(modalidadSerieDe(torneo))
         const categoriaNombre = categorias.find(c => c.id.toString() === categoriaId)?.nombre ?? ''
 
         const encuentros = partidos.filter(p => p.participante_local && p.participante_visitante)
@@ -1680,7 +1680,7 @@ export default function LlavesTorneoModal({
                                 })),
                             })) as never,
                         }]}
-                        modalidad="EQUIPOS"
+                        modalidad={modalidadSerieDe(torneo)}
                         imprimirAlGuardar={false}
                         onGuardado={() => {
                             invalidarSeries()

@@ -105,7 +105,7 @@ export function matchupsEstandar(modalidad: ModalidadSerie): Matchup[] {
 }
 
 /** Modalidad de serie de un torneo: LIGA si lo es, si no DOBLES o EQUIPOS. */
-export function modalidadSerie(t: { modalidad: string; liga?: boolean }): ModalidadSerie {
+export function modalidadSerie(t: { modalidad?: string; liga?: boolean }): ModalidadSerie {
     if (t.liga) return 'LIGA'
     return t.modalidad === 'DOBLES' ? 'DOBLES' : 'EQUIPOS'
 }
