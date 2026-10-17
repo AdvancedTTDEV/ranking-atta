@@ -555,7 +555,7 @@ export default function GruposTorneoModal({ isOpen, onClose, torneo, onOpenParti
                     }),
                 })),
             })
-            await descargarPngDeDoc(doc, 1100, `grupos-${torneo.nombre}-cat${categoriaOperativaId}.png`, oscuro ? '#0B1120' : '#ffffff')
+            await descargarPngDeDoc(doc, 900, `grupos-${torneo.nombre}-cat${categoriaOperativaId}.png`, oscuro ? '#0B1120' : '#ffffff')
             toast.success('Imagen descargada')
         } catch (error) {
             console.error('Error al descargar:', error)
