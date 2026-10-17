@@ -61,7 +61,7 @@ jobs:
               RESP=$(curl -s --max-time 60 "$APP_URL/api/dbStarter" || true)
               echo "dbStarter: ${RESP:-sin respuesta}"
             fi
-            if ERR=$(mysql --ssl-mode=DISABLED --connect-timeout=20 \
+            if ERR=$(mysql --ssl-mode=DISABLED \
                  -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -e 'SELECT 1' railway 2>&1 >/dev/null); then
               echo "BD despierta (intento $i)"
               exit 0
@@ -79,7 +79,7 @@ jobs:
           OUT="backup-${{ matrix.entorno }}-${TS}.sql.gz"
           # Reintento por si la BD vuelve a dormirse o la conexión parpadea.
           for i in 1 2 3; do
-            if mysqldump --ssl-mode=DISABLED --connect-timeout=20 \
+            if mysqldump --ssl-mode=DISABLED \
                  --single-transaction --quick --routines --triggers \
                  -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" railway | gzip > "$OUT"; then
               # Verificación: gzip íntegro y dump completo.
