@@ -20,6 +20,9 @@
  * Si tiene más de 3, los sobrantes tampoco juegan.
  */
 
+/** Modalidad de una serie por equipos. */
+export type ModalidadSerie = 'DOBLES' | 'EQUIPOS' | 'LIGA'
+
 /** Letras válidas. SOLO 3 por lado. */
 export type LetraLocal = 'A' | 'B' | 'C'
 export type LetraVisitante = 'X' | 'Y' | 'Z'
@@ -52,15 +55,30 @@ export const MATCHUPS_EQUIPOS: Matchup[] = [
     { tipo: 'INDIVIDUAL', cruces: { local: 'B', visitante: 'X' },               etiqueta: 'B vs X' },
 ]
 
+/**
+ * Matchups de LIGA (7 juegos, se cierra al llegar a 4 victorias):
+ * B+C vs Y+Z · A-Y · B-X · C-Z · A+C vs X+Z · A-X · B-Y.
+ */
+export const MATCHUPS_LIGA: Matchup[] = [
+    { tipo: 'DOBLES',     cruces: { local: ['B', 'C'], visitante: ['Y', 'Z'] }, etiqueta: 'B+C vs Y+Z' },
+    { tipo: 'INDIVIDUAL', cruces: { local: 'A', visitante: 'Y' },               etiqueta: 'A vs Y' },
+    { tipo: 'INDIVIDUAL', cruces: { local: 'B', visitante: 'X' },               etiqueta: 'B vs X' },
+    { tipo: 'INDIVIDUAL', cruces: { local: 'C', visitante: 'Z' },               etiqueta: 'C vs Z' },
+    { tipo: 'DOBLES',     cruces: { local: ['A', 'C'], visitante: ['X', 'Z'] }, etiqueta: 'A+C vs X+Z' },
+    { tipo: 'INDIVIDUAL', cruces: { local: 'A', visitante: 'X' },               etiqueta: 'A vs X' },
+    { tipo: 'INDIVIDUAL', cruces: { local: 'B', visitante: 'Y' },               etiqueta: 'B vs Y' },
+]
+
 /** Matchups estándar para DOBLES (1 partido: B+C vs Y+Z). */
 export const MATCHUPS_DOBLES: Matchup[] = [
     { tipo: 'DOBLES', cruces: { local: ['B', 'C'], visitante: ['Y', 'Z'] }, etiqueta: 'B+C vs Y+Z' },
 ]
 
 /** Cantidad de detalles que una serie tiene según la modalidad. */
-export const DETALLES_POR_MODALIDAD: Record<'DOBLES' | 'EQUIPOS', number> = {
+export const DETALLES_POR_MODALIDAD: Record<ModalidadSerie, number> = {
     DOBLES: 1,
     EQUIPOS: 5,
+    LIGA: 7,
 }
 
 /** Letras del local y visitante. Solo 3 por lado. */
@@ -68,9 +86,10 @@ export const LETRAS_LOCALES: readonly LetraLocal[] = ['A', 'B', 'C']
 export const LETRAS_VISITANTES: readonly LetraVisitante[] = ['X', 'Y', 'Z']
 
 /** Cantidad de filas (slots) que la hoja de alineación debe tener por lado. */
-export const FILAS_POR_LADO: Record<'DOBLES' | 'EQUIPOS', 3> = {
+export const FILAS_POR_LADO: Record<ModalidadSerie, 3> = {
     DOBLES: 3,
     EQUIPOS: 3,
+    LIGA: 3,
 }
 
 /** Asignación de IDs de jugador por letra. Cada letra tiene 0 = sin asignar. */
@@ -80,8 +99,20 @@ export interface Asignacion {
 }
 
 /** Devuelve los matchups estándar según la modalidad. */
-export function matchupsEstandar(modalidad: 'DOBLES' | 'EQUIPOS'): Matchup[] {
+export function matchupsEstandar(modalidad: ModalidadSerie): Matchup[] {
+    if (modalidad === 'LIGA') return MATCHUPS_LIGA
     return modalidad === 'DOBLES' ? MATCHUPS_DOBLES : MATCHUPS_EQUIPOS
+}
+
+/** Modalidad de serie de un torneo: LIGA si lo es, si no DOBLES o EQUIPOS. */
+export function modalidadSerie(t: { modalidad?: string; liga?: boolean }): ModalidadSerie {
+    if (t.liga) return 'LIGA'
+    return t.modalidad === 'DOBLES' ? 'DOBLES' : 'EQUIPOS'
+}
+
+/** Detalles (juegos) de una serie: tipo y orden canónicos. */
+export function detallesSerie(liga: boolean): { orden: number; tipo: 'DOBLES' | 'INDIVIDUAL' }[] {
+    return matchupsEstandar(liga ? 'LIGA' : 'EQUIPOS').map((m, i) => ({ orden: i + 1, tipo: m.tipo }))
 }
 
 /**
@@ -103,7 +134,7 @@ export function resolverMatchup(matchup: Matchup, asignacion: Asignacion): {
 }
 
 /** Cantidad de letras que la modalidad ocupa por lado. */
-export function cantidadLetras(modalidad: 'DOBLES' | 'EQUIPOS'): 3 {
+export function cantidadLetras(modalidad: ModalidadSerie): 3 {
     return FILAS_POR_LADO[modalidad]
 }
 
@@ -120,7 +151,7 @@ export function cantidadLetras(modalidad: 'DOBLES' | 'EQUIPOS'): 3 {
 export function asignacionPorDefecto(
     idsRosterAbc: number[],
     idsRosterXyz: number[],
-    modalidad: 'DOBLES' | 'EQUIPOS',
+    modalidad: ModalidadSerie,
 ): Asignacion {
     const cantidad = cantidadLetras(modalidad)
     const abc: Partial<Record<LetraLocal, number>> = {}

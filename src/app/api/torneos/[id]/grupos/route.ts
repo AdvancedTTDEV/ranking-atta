@@ -54,7 +54,7 @@ export async function POST(request: Request, { params }: RouteParams) {
     try {
         const { id } = await params
         const torneoId = Number(id)
-        const { categoriaId, tamañoGrupo = 4, abierto = false } = await request.json()
+        const { categoriaId, tamañoGrupo: tamañoSolicitado = 4, abierto = false } = await request.json()
 
         if (!categoriaId) return NextResponse.json({ error: "Datos incompletos" }, { status: 400 })
 
@@ -94,6 +94,12 @@ export async function POST(request: Request, { params }: RouteParams) {
             return eloPromedio(b) - eloPromedio(a)
         })
 
+        // Liga: siempre 2 grupos, sin importar el tamaño pedido.
+        const torneoLiga = await prisma.torneos.findUnique({ where: { id: torneoId }, select: { liga: true } })
+        if (torneoLiga?.liga && participantes.length < 4) {
+            return NextResponse.json({ error: "La liga requiere al menos 4 equipos" }, { status: 400 })
+        }
+        const tamañoGrupo = torneoLiga?.liga ? Math.ceil(participantes.length / 2) : tamañoSolicitado
         const numGrupos = Math.ceil(participantes.length / tamañoGrupo)
         const gruposTemp: typeof participantes[] = Array.from({ length: numGrupos }, () => [])
 

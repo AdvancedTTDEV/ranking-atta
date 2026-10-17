@@ -39,3 +39,20 @@ _(se completa al terminar)_
       de comandos, error explícito si faltan secrets.
 - [x] Verificado con mysql/mysqldump simulados: espera a que despierte, reintenta y rechaza dumps truncados.
 - [ ] Verificar en GitHub: Actions → Backup BD → Run workflow (tras el merge a main).
+
+
+---
+
+# Tarea: Liga (torneo EQUIPOS con flag `liga`) — rama `feature/liga`
+
+- [x] Migración aditiva `20261016120000_liga` (`torneos.liga`, `torneo_partidos_programados.fecha_numero`) + schema
+- [x] `calendario-liga.ts` + `scripts/check-calendario-liga.mts`
+- [x] `MATCHUPS_LIGA` (7 juegos), `detallesSerie`, `modalidadSerie`; cierre por mayoría en `detalles/[detalleId]`
+- [x] API: alta de torneo, grupos (2 fijos), partidos (fechas), llaves (final con 1 por grupo), alineación
+- [x] UI: TorneoForm, badge, GruposTorneoModal, `CalendarioLigaFechas`, botón Final, wizard/hojas con LIGA
+- [ ] Aplicar la migración (la aplica el usuario) y probar E2E: 12 equipos, 2 grupos de 6, 30 encuentros en 8 fechas, alinear, 4 juegos cierran, tabla, Final
+
+## Review (Liga)
+- Sin BD de desarrollo configurada en este equipo: NO se probó end-to-end ni se aplicó ninguna migración.
+- Torneo EQUIPOS normal: `liga=false` da `detallesSerie(false)` = 5 juegos (mismo orden), mayoría = floor(5/2)+1 = 3
+  (igual que el `=== 3` previo), llaves con `clasificanPorGrupo` del cliente (2).

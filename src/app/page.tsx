@@ -1,21 +1,36 @@
 'use client'
 
 import { SpeedInsights } from '@vercel/speed-insights/next'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useSession, signIn, signOut } from 'next-auth/react'
 import { ArrowRightIcon, ArrowRightOnRectangleIcon } from '@heroicons/react/24/outline'
 import { useTheme } from '@/app/providers'
 import CargandoPantalla from '@/components/ui/CargandoPantalla'
 import { MoonIcon, SunIcon } from '@heroicons/react/24/outline'
 
-export default function Home() {
+export default function Page() {
+    // useSearchParams exige Suspense en el build de Next.
+    return (
+        <Suspense>
+            <Home />
+        </Suspense>
+    )
+}
+
+function Home() {
     const router = useRouter()
     const [loading, setLoading] = useState(false)
     const [intentoAcceso, setIntentoAcceso] = useState(0)
     const [errorConexion, setErrorConexion] = useState(false)
     const { data: session } = useSession()
     const { resolvedTheme, toggleTheme } = useTheme()
+    const bdDormida = useSearchParams().get('error') === 'bd_dormida'
+
+    // Volvimos de un login fallido por BD dormida: despertarla.
+    useEffect(() => {
+        if (bdDormida) fetch('/api/dbStarter').catch(() => {})
+    }, [bdDormida])
 
     const handleAccessDashboard = async () => {
         setLoading(true)
@@ -108,6 +123,11 @@ export default function Home() {
                                         Accede con tu cuenta de Google para entrar al panel.
                                     </p>
                                 </div>
+                                {bdDormida && (
+                                    <div role="alert" className="banner banner-warning text-sm">
+                                        La base de datos estaba dormida. Espera unos segundos y vuelve a iniciar sesión.
+                                    </div>
+                                )}
                                 <button
                                     type="button"
                                     onClick={() => signIn('google')}

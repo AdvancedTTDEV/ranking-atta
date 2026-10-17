@@ -73,7 +73,9 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
             nombre,
             fecha,
             ubicacion,
-            modalidad,
+            // "Liga" es una variante de EQUIPOS (flag liga en el backend).
+            modalidad: modalidad === 'LIGA' ? 'EQUIPOS' : modalidad,
+            liga: modalidad === 'LIGA',
             abierto,
             categorias: categoriasAEnviar,
             sub21,
@@ -118,6 +120,7 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
                     <option value="INDIVIDUAL">Individual</option>
                     <option value="DOBLES">Dobles</option>
                     <option value="EQUIPOS">Por equipos</option>
+                    <option value="LIGA">Liga (equipos)</option>
                     <option value="ATTA_TEAMS">ATTA Teams</option>
                 </Select>
                 <Select
@@ -206,7 +209,7 @@ export default function TorneoForm({ onSuccessAction, onCancelAction }: TorneoFo
                             </>
                         ) : (
                             <>
-                                Los torneos de {modalidad === 'DOBLES' ? 'dobles' : 'por equipos'} son
+                                Los torneos de {modalidad === 'DOBLES' ? 'dobles' : modalidad === 'LIGA' ? 'liga' : 'por equipos'} son
                                 abiertos a todas las categorías. Se asignarán automáticamente al crear el torneo.
                             </>
                         )}

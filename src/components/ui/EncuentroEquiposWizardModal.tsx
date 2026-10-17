@@ -17,7 +17,7 @@ import {
     LETRAS_LOCALES, LETRAS_VISITANTES,
     matchupsEstandar, resolverMatchup,
     asignacionPorDefecto,
-    type LetraLocal, type LetraVisitante, type Asignacion,
+    type LetraLocal, type LetraVisitante, type Asignacion, type ModalidadSerie,
 } from '@/lib/torneo/matchups'
 
 // ── Tipos ────────────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ interface Props {
     grupoId: number
     equipos: { local: Participante; visitante: Participante }
     partidos: PartidoLite[]
-    modalidad: 'DOBLES' | 'EQUIPOS'
+    modalidad: ModalidadSerie
     /** Callback al guardar exitosamente (para refrescar listas). */
     onGuardado?: () => void
     /** true = abrir el diálogo de impresión al guardar (window.print
@@ -129,7 +129,7 @@ export default function EncuentroEquiposWizardModal({
         // Si en BD ya hay alineaciones guardadas en los partidos del grupo,
         // las usamos como fuente de verdad. Tomamos la del PRIMER partido
         // (todas las series del grupo comparten la misma asignación).
-        const desdeBd = leerAsignacionDesdeBd(partidos)
+        const desdeBd = leerAsignacionDesdeBd(partidos, modalidad)
         if (desdeBd) {
             setAsignacion(desdeBd)
             // La alineación guardada fue leída asumiendo que el lado LOCAL
@@ -223,7 +223,7 @@ export default function EncuentroEquiposWizardModal({
 
             // Para EQUIPOS: asignar 1 detalle por matchup (DOBLES, INDIVIDUAL×4).
             // Para DOBLES: 1 solo detalle (el DOBLES del partido).
-            if (modalidad === 'EQUIPOS') {
+            if (modalidad !== 'DOBLES') {
                 partido.detalles
                     .slice() // copia
                     .sort((a, b) => a.orden - b.orden)
@@ -372,7 +372,7 @@ export default function EncuentroEquiposWizardModal({
             title={partidos.length === 1
                 ? `Alineación del partido`
                 : `Alineación del grupo · ${partidos.length} partidos`}
-            description={`${torneo.nombre} · ${categoria}${modalidad === 'DOBLES' ? ' · Dobles' : ' · Equipos'}`}
+            description={`${torneo.nombre} · ${categoria}${(modalidad === 'DOBLES' ? ' · Dobles' : modalidad === 'LIGA' ? ' · Liga' : ' · Equipos')}`}
             size="full"
             footer={
                 <div className="flex items-center justify-between w-full">
@@ -484,7 +484,7 @@ export default function EncuentroEquiposWizardModal({
 /** Lee una asignación existente desde los `detalles[].jugadores` de los
  *  partidos del grupo (toma los del primer partido). Devuelve null si
  *  no hay alineaciones guardadas. */
-function leerAsignacionDesdeBd(partidos: PartidoLite[]): Asignacion | null {
+function leerAsignacionDesdeBd(partidos: PartidoLite[], modalidad: ModalidadSerie): Asignacion | null {
     // Para DOBLES miramos el detalle DOBLES del primer partido.
     // Para EQUIPOS miramos TODOS los detalles del primer partido (los 5)
     // y mapeamos por posición. Para esta lectura rápida usamos el detalle
@@ -497,6 +497,23 @@ function leerAsignacionDesdeBd(partidos: PartidoLite[]): Asignacion | null {
     const abc: Partial<Record<LetraLocal, number>> = {}
     const xyz: Partial<Record<LetraVisitante, number>> = {}
     let anyoSet = false
+
+    // Liga: el primer individual es A vs Y (no A vs X), así que leemos cada
+    // detalle con SU matchup y rellenamos las letras que falten.
+    if (modalidad === 'LIGA') {
+        const matchups = matchupsEstandar('LIGA')
+        detalles.slice().sort((a, b) => a.orden - b.orden).forEach((detalle, idx) => {
+            const m = matchups[idx]
+            if (!m) return
+            const letrasLoc = Array.isArray(m.cruces.local) ? m.cruces.local : [m.cruces.local]
+            const letrasVis = Array.isArray(m.cruces.visitante) ? m.cruces.visitante : [m.cruces.visitante]
+            const locales = detalle.jugadores.filter(j => j.lado === 'LOCAL')
+            const visitas = detalle.jugadores.filter(j => j.lado === 'VISITANTE')
+            letrasLoc.forEach((l, i) => { if (locales[i] && !abc[l]) { abc[l] = locales[i].jugador_id; anyoSet = true } })
+            letrasVis.forEach((l, i) => { if (visitas[i] && !xyz[l]) { xyz[l] = visitas[i].jugador_id; anyoSet = true } })
+        })
+        return anyoSet ? { abc, xyz } : null
+    }
 
     // Detalle DOBLES (orden 1) → B+C vs Y+Z
     const dobles = detalles.find(d => d.tipo === 'DOBLES')
@@ -625,7 +642,7 @@ function PasoAsignarLetras({
     asignacion: Asignacion
     setLetraAbc: (l: LetraLocal, id: number) => void
     setLetraXyz: (l: LetraVisitante, id: number) => void
-    modalidad: 'DOBLES' | 'EQUIPOS'
+    modalidad: ModalidadSerie
     cantLetras: number
 }) {
     return (
@@ -633,7 +650,7 @@ function PasoAsignarLetras({
             <p className="text-sm text-fg-muted mb-3">
                 Para cada letra, elige el jugador que la ocupa. Por defecto ya están los primeros del roster
                 en orden, pero puedes reasignar escribiendo <b>nombre o ID</b>. Esta asignación se usa en
-                TODOS los partidos {modalidad === 'EQUIPOS' ? 'del grupo' : ''}.
+                TODOS los partidos {modalidad !== 'DOBLES' ? 'del grupo' : ''}.
             </p>
             <div className="grid grid-cols-2 gap-4">
                 <div className="card-flush">
@@ -785,7 +802,7 @@ function PasoRevisarMatchups({
     equipos: { local: Participante; visitante: Participante }
     asignacion: Asignacion
     ladoAbc: 'local' | 'visitante' | null
-    modalidad: 'DOBLES' | 'EQUIPOS'
+    modalidad: ModalidadSerie
 }) {
     const poolAbc = ladoAbc === 'visitante' ? equipos.visitante.miembros.map(m => m.jugadores) : equipos.local.miembros.map(m => m.jugadores)
     const poolXyz = ladoAbc === 'visitante' ? equipos.local.miembros.map(m => m.jugadores) : equipos.visitante.miembros.map(m => m.jugadores)
