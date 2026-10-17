@@ -73,6 +73,8 @@ export async function POST(request: Request) {
   const abierto = Boolean(data.abierto)
   // Clase Sub 21: los resultados de este torneo no afectan el ELO.
   const sub21 = Boolean(data.sub21)
+  // Liga: variante de EQUIPOS (2 grupos, fechas, final).
+  const liga = modalidad === 'EQUIPOS' && Boolean(data.liga)
 
   if (!modalidadesValidas.includes(modalidad)) {
     return NextResponse.json({ message: 'Modalidad de torneo inválida' }, { status: 400 })
@@ -103,6 +105,7 @@ export async function POST(request: Request) {
         modalidad,
         abierto,
         sub21,
+        liga,
         torneo_categorias: {
           create: categoriasAsignadas.map((catId: number) => ({
             categoria_id: catId

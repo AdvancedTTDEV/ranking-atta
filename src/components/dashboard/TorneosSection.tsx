@@ -21,6 +21,7 @@ type Torneo = {
     fecha: string
     ubicacion: string
     modalidad: 'INDIVIDUAL' | 'DOBLES' | 'EQUIPOS' | 'ATTA_TEAMS'
+    liga?: boolean
     torneo_categorias: { categorias: { id: number; nombre: string } }[]
 }
 
@@ -101,8 +102,8 @@ export default function TorneosSection({ className = '' }) {
         {
             header: 'Modalidad',
             accessor: 'modalidad',
-            render: (m: Torneo['modalidad']) => (
-                <Badge variant={modalidadVariant[m]}>{modalidadLabel[m]}</Badge>
+            render: (m: Torneo['modalidad'], t: Torneo) => (
+                <Badge variant={modalidadVariant[m]}>{t.liga ? 'Liga' : modalidadLabel[m]}</Badge>
             ),
         },
         {

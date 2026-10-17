@@ -59,7 +59,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
         const partido = await prisma.torneo_partidos_programados.findFirst({
             where: { id: programadoId, torneo_id: torneoId },
             include: {
-                torneos: { select: { modalidad: true } },
+                torneos: { select: { modalidad: true, liga: true } },
                 participante_local: { include: { miembros: true } },
                 participante_visitante: { include: { miembros: true } },
                 detalles: { select: { id: true, tipo: true, estado: true } }
@@ -78,10 +78,10 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
         // Backfill: brackets de llave generados antes de que los partidos
         // por equipos tuvieran serie llegan SIN detalles. Los creamos aquí
-        // para que el wizard siempre tenga los 5 juegos que alinear.
+        // para que el wizard siempre tenga los juegos que alinear.
         if (partido.detalles.length === 0 && (partido.torneos.modalidad === 'EQUIPOS' || partido.torneos.modalidad === 'ATTA_TEAMS')) {
             await prisma.$transaction(async tx => {
-                await asegurarDetallesEncuentro(tx, programadoId)
+                await asegurarDetallesEncuentro(tx, programadoId, partido.torneos.liga)
             })
             partido.detalles = await prisma.torneo_partido_detalles.findMany({
                 where: { partido_programado_id: programadoId },
@@ -177,7 +177,7 @@ export async function POST(_request: Request, { params }: RouteParams) {
 
         const partido = await prisma.torneo_partidos_programados.findFirst({
             where: { id: programadoId, torneo_id: torneoId },
-            include: { torneos: { select: { modalidad: true } } },
+            include: { torneos: { select: { modalidad: true, liga: true } } },
         })
         if (!partido) return NextResponse.json({ error: 'Partido no encontrado' }, { status: 404 })
         if (partido.torneos.modalidad !== 'EQUIPOS' && partido.torneos.modalidad !== 'ATTA_TEAMS') {
@@ -185,7 +185,7 @@ export async function POST(_request: Request, { params }: RouteParams) {
         }
 
         await prisma.$transaction(async tx => {
-            await asegurarDetallesEncuentro(tx, programadoId)
+            await asegurarDetallesEncuentro(tx, programadoId, partido.torneos.liga)
         })
 
         const detalles = await prisma.torneo_partido_detalles.findMany({

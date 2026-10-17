@@ -15,7 +15,7 @@
  */
 import { abrirImpresion, type DocImpresion } from '@/lib/documentos-torneo'
 import {
-    MATCHUPS_DOBLES, MATCHUPS_EQUIPOS,
+    matchupsEstandar, type ModalidadSerie,
     type LetraLocal, type LetraVisitante,
 } from './matchups'
 
@@ -32,7 +32,7 @@ export interface ArbitroHoja { nombre: string; equipo: string | null }
 export interface HojaPartidosParams {
     torneoNombre: string
     categoria: string
-    modalidad: 'DOBLES' | 'EQUIPOS'
+    modalidad: ModalidadSerie
     /** Orden del encuentro dentro del grupo (para "Encuentro #N"). */
     encuentroOrden?: number
     nombreEquipoAbc: string
@@ -60,9 +60,9 @@ interface DetalleAlineacion {
  */
 export function alineacionDesdeDetalles(
     detalles: DetalleAlineacion[],
-    modalidad: 'DOBLES' | 'EQUIPOS',
+    modalidad: ModalidadSerie,
 ): LetrasHoja | null {
-    const matchups = modalidad === 'DOBLES' ? MATCHUPS_DOBLES : MATCHUPS_EQUIPOS
+    const matchups = matchupsEstandar(modalidad)
     const abc: LetrasHoja['abc'] = {}
     const xyz: LetrasHoja['xyz'] = {}
     let hayAlguno = false
@@ -108,7 +108,7 @@ function celdaSets(claseExtra = ''): string {
 export function construirDocHojaPartidos({
     torneoNombre, categoria, modalidad, encuentroOrden, nombreEquipoAbc, nombreEquipoXyz, alineacion, arbitro,
 }: HojaPartidosParams): DocImpresion {
-    const matchups = modalidad === 'DOBLES' ? MATCHUPS_DOBLES : MATCHUPS_EQUIPOS
+    const matchups = matchupsEstandar(modalidad)
 
     const listaLado = (
         letras: readonly string[],

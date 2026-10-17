@@ -44,18 +44,18 @@
  * o EQUIPOS) la hoja es la misma: 3 filas por mitad.
  */
 
-import { MATCHUPS_DOBLES, MATCHUPS_EQUIPOS } from './matchups'
+import { matchupsEstandar, type ModalidadSerie } from './matchups'
 
 const LETRAS_LOCALES = ['A', 'B', 'C'] as const
 const LETRAS_VISITANTES = ['X', 'Y', 'Z'] as const
 
-type ModalidadHoja = 'DOBLES' | 'EQUIPOS'
+type ModalidadHoja = ModalidadSerie
 
 /** Tira informativa con el ORDEN de los partidos de la serie ATTA, para
  *  que el capitán sepa qué posiciones juegan en cada juego. Es solo
  *  referencia visual: no altera el resto de la hoja. */
 function bloqueOrdenPartidos(modalidad: ModalidadHoja): string {
-    const items = modalidad === 'DOBLES' ? MATCHUPS_DOBLES : MATCHUPS_EQUIPOS
+    const items = matchupsEstandar(modalidad)
     return `
         <div class="orden-partidos">
             <span class="orden-titulo">Orden:</span>
