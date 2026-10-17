@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server'
 import { crucesRoundRobin } from '@/lib/seed'
 import { OFFSET_MANUAL, calcularEstadisticas, compararRatio, calcularClasificacionGrupo, PosicionManual, PartidoParaTabla } from '@/lib/empates'
 import { requireAuth } from '@/lib/auth'
+import { asignarFechas } from '@/lib/torneo/calendario-liga'
+import { detallesSerie } from '@/lib/torneo/matchups'
 
 interface RouteParams { params: Promise<{ id: string }> }
 
@@ -189,12 +191,14 @@ export async function POST(request: Request, { params }: RouteParams) {
         const torneoId = Number(id)
         const body = await request.json() as {
             categoriaId: number
+            /** Solo liga: encuentros por grupo y fecha (default 2). */
+            porFecha?: number
             partidos?: { grupo_id: number; participante_local_id: number; participante_visitante_id: number; arbitro_jugador_id: number | null; orden: number }[]
         }
         const { categoriaId, partidos: partidosSeleccionados } = body
         if (!torneoId || !categoriaId) return NextResponse.json({ error: 'Falta torneo o categoría' }, { status: 400 })
 
-        const torneo = await prisma.torneos.findUnique({ where: { id: torneoId }, select: { modalidad: true } })
+        const torneo = await prisma.torneos.findUnique({ where: { id: torneoId }, select: { modalidad: true, liga: true } })
         if (!torneo) return NextResponse.json({ error: 'Torneo no encontrado' }, { status: 404 })
 
         const grupos = await prisma.torneo_grupos.findMany({
@@ -209,6 +213,7 @@ export async function POST(request: Request, { params }: RouteParams) {
         })
 
         if (grupos.length === 0) return NextResponse.json({ error: 'Primero genera los grupos de esta categoría' }, { status: 400 })
+        if (torneo.liga && grupos.length !== 2) return NextResponse.json({ error: 'La liga requiere exactamente 2 grupos' }, { status: 400 })
         if (grupos.some(grupo => grupo.participantes.length < 2)) {
             return NextResponse.json({ error: 'Cada grupo necesita al menos dos participantes' }, { status: 400 })
         }
@@ -252,6 +257,7 @@ export async function POST(request: Request, { params }: RouteParams) {
             participante_visitante_id: number
             arbitro_jugador_id: number | null
             orden: number
+            fecha_numero?: number
         }
         const nuevosPartidos: NuevoPartido[] = []
         if (partidosSeleccionados && Array.isArray(partidosSeleccionados)) {
@@ -307,6 +313,21 @@ export async function POST(request: Request, { params }: RouteParams) {
             }
         }
 
+        // Liga: repartimos los cruces de cada grupo en fechas (porFecha
+        // encuentros por grupo y fecha) y ordenamos por (fecha, índice).
+        if (torneo.liga) {
+            const porFecha = Math.max(1, Math.floor(Number(body.porFecha)) || 2)
+            for (const grupo of grupos) {
+                const delGrupo = nuevosPartidos.filter(p => p.grupo_id === grupo.id)
+                const fechas = asignarFechas(delGrupo.map(p => [p.participante_local_id, p.participante_visitante_id]), porFecha)
+                delGrupo.forEach((p, i) => { p.fecha_numero = fechas[i] })
+                delGrupo
+                    .map((p, i) => ({ p, i }))
+                    .sort((a, b) => fechas[a.i] - fechas[b.i] || a.i - b.i)
+                    .forEach(({ p }, rank) => { p.orden = rank + 1 })
+            }
+        }
+
         await prisma.$transaction(async tx => {
             const finalizados = await tx.torneo_partidos_programados.count({
                 where: { torneo_id: torneoId, categoria_id: Number(categoriaId), grupo_id: { not: null }, estado: 'FINALIZADO' }
@@ -334,7 +355,8 @@ export async function POST(request: Request, { params }: RouteParams) {
                     participante_local_id: item.participante_local_id,
                     participante_visitante_id: item.participante_visitante_id,
                     arbitro_jugador_id: item.arbitro_jugador_id,
-                    orden: item.orden
+                    orden: item.orden,
+                    fecha_numero: item.fecha_numero ?? null
                 }))
             })
 
@@ -343,14 +365,9 @@ export async function POST(request: Request, { params }: RouteParams) {
                     where: { torneo_id: torneoId, categoria_id: Number(categoriaId), grupo_id: { in: grupos.map(grupo => grupo.id) } },
                     select: { id: true }
                 })
+                const serie = detallesSerie(!!torneo.liga)
                 await tx.torneo_partido_detalles.createMany({
-                    data: creados.flatMap(partido => [
-                        { partido_programado_id: partido.id, orden: 1, tipo: 'DOBLES' as const },
-                        { partido_programado_id: partido.id, orden: 2, tipo: 'INDIVIDUAL' as const },
-                        { partido_programado_id: partido.id, orden: 3, tipo: 'INDIVIDUAL' as const },
-                        { partido_programado_id: partido.id, orden: 4, tipo: 'INDIVIDUAL' as const },
-                        { partido_programado_id: partido.id, orden: 5, tipo: 'INDIVIDUAL' as const }
-                    ])
+                    data: creados.flatMap(partido => serie.map(d => ({ partido_programado_id: partido.id, ...d })))
                 })
             } else if (torneo.modalidad === 'DOBLES') {
                 // Para DOBLES creamos un único detalle tipo DOBLES por partido.

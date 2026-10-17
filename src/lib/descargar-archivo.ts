@@ -9,10 +9,11 @@
  *    y NO pasa nada (síntoma: "no guarda nada ni en Safari ni en Chrome").
  *
  * Estrategia en `descargarBlob`:
- *  1) Web Share API con archivos (iOS 15+/Android/Edge): abre la hoja
- *     nativa del sistema con "Guardar imagen" / "Guardar en Archivos".
- *     Es la única vía 100% confiable en iOS.
- *  2) Fallback desktop/iOS viejo: `<a download>` programático; en iOS,
+ *  1) Web Share API con archivos, solo en dispositivos táctiles (iOS 15+/Android):
+ *     abre la hoja nativa con "Guardar imagen" / "Guardar en Archivos".
+ *     Es la única vía 100% confiable en iOS. En Mac de escritorio la hoja no
+ *     guarda el archivo, así que no se usa.
+ *  2) Resto (escritorio y fallback): `<a download>` programático; en iOS,
  *     apertura en nueva pestaña (con rescate si el popup fue bloqueado).
  */
 const esIOS = () => {
@@ -59,8 +60,9 @@ export function descargarArchivo(url: string, nombreArchivo: string): void {
 }
 
 /**
- * Igual que `descargarArchivo` pero recibiendo un Blob. Por defecto usa la hoja nativa de compartir.
- * Con `compartir: false` descarga directo con `<a download>` (iOS 13+ lo soporta para blobs).
+ * Igual que `descargarArchivo` pero recibiendo un Blob. Por defecto, en dispositivos táctiles
+ * usa la hoja nativa de compartir; en escritorio (Mac incluido) descarga directo con `<a download>`.
+ * Con `compartir: false` descarga directo siempre (iOS 13+ lo soporta para blobs).
  */
 export function descargarBlob(
     blob: Blob,
@@ -69,8 +71,11 @@ export function descargarBlob(
 ): void {
     const url = URL.createObjectURL(blob)
     const liberar = () => setTimeout(() => URL.revokeObjectURL(url), esIOS() ? 30_000 : 1000)
+    const nav = (typeof navigator !== 'undefined' ? navigator : undefined) as NavigatorConShare | undefined
+    // Solo táctiles (iPad con touch también cuenta): en Mac de escritorio la hoja no guarda el archivo.
+    const usarHoja = compartir && (nav?.maxTouchPoints ?? 0) > 0
 
-    if (!compartir) {
+    if (!usarHoja) {
         const enlace = document.createElement('a')
         enlace.href = url
         enlace.download = nombreArchivo
@@ -83,7 +88,6 @@ export function descargarBlob(
     }
 
     // 1) Hoja nativa de compartir con archivos ("Guardar imagen" en iOS).
-    const nav = (typeof navigator !== 'undefined' ? navigator : undefined) as NavigatorConShare | undefined
     if (nav?.share && nav.canShare) {
         try {
             const archivo = new File([blob], nombreArchivo, {

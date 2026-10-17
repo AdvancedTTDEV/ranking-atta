@@ -42,7 +42,7 @@ export async function GET(request: Request, { params }: Params) {
   // PERF: las cuatro consultas son independientes entre sí → una sola
   // tanda en paralelo. Sobre un túnel con RTT alto esto convierte
   // ~4-5 tiempos de ida y vuelta secuenciales en UNO.
-  const [partidos, grupos, resultados, grupoParticipantes] = await Promise.all([
+  const [partidos, grupos, resultados, grupoParticipantes, torneoLiga] = await Promise.all([
     prisma.torneo_partidos_programados.findMany({
       where: {
         torneo_id: Number(id),
@@ -113,6 +113,7 @@ export async function GET(request: Request, { params }: Params) {
       where: { torneo_grupos: { torneo_id: Number(id), categoria_id: categoriaId } },
       select: { grupo_id: true, torneo_participante_id: true, posicion: true }
     }) : Promise.resolve([]),
+    necesitaPool ? prisma.torneos.findUnique({ where: { id: Number(id) }, select: { liga: true } }) : Promise.resolve(null),
   ])
 
   if (!necesitaPool) {
@@ -139,7 +140,7 @@ export async function GET(request: Request, { params }: Params) {
       partidosDelGrupo,
       manualPorGrupo.get(grupo.id) || new Map()
     )
-    orden.slice(0, nivel ? 3 : CLASIFICAN_POR_GRUPO_DEFAULT).forEach((participanteId, index) => {
+    orden.slice(0, nivel ? 3 : torneoLiga?.liga ? 1 : CLASIFICAN_POR_GRUPO_DEFAULT).forEach((participanteId, index) => {
       // En ATTA Teams el pool de cada llave es UNA posición por grupo
       // (nivel 1 → los 1ros, nivel 2 → los 2dos, nivel 3 → los 3ros).
       if (nivel && index + 1 !== nivel) return
@@ -174,16 +175,18 @@ export async function POST(request: Request, { params }: Params) {
     // así que al crear el bracket le generamos sus detalles de una vez.
     const torneo = await prisma.torneos.findUnique({
       where: { id: torneoId },
-      select: { modalidad: true },
+      select: { modalidad: true, liga: true },
     })
     const esPorEquipos = torneo?.modalidad === 'EQUIPOS' || torneo?.modalidad === 'ATTA_TEAMS'
     // En ATTA Teams cada llave toma exactamente 1 clasificado por grupo.
-    const clasificanEfectivo = nivelLlave ? 1 : Number(clasificanPorGrupo)
+    // Liga: solo el 1º de cada grupo juega la final.
+    const clasificanEfectivo = nivelLlave || torneo?.liga ? 1 : Number(clasificanPorGrupo)
     const grupos = await prisma.torneo_grupos.findMany({
       where: { torneo_id: torneoId, categoria_id: Number(categoriaId) },
       include: { participantes: { include: { torneo_participantes: true } } }
     })
     if (!grupos.length) return NextResponse.json({ error: 'No hay grupos' }, { status: 400 })
+    if (torneo?.liga && grupos.length !== 2) return NextResponse.json({ error: 'La liga requiere exactamente 2 grupos' }, { status: 400 })
     const [totalGrupos, totalFinalizados] = await Promise.all([
       prisma.torneo_partidos_programados.count({ where: { torneo_id: torneoId, categoria_id: Number(categoriaId), grupo_id: { not: null }, fase: 'GRUPOS' } }),
       prisma.torneo_partidos_programados.count({ where: { torneo_id: torneoId, categoria_id: Number(categoriaId), grupo_id: { not: null }, fase: 'GRUPOS', estado: 'FINALIZADO' } })
@@ -323,7 +326,7 @@ export async function POST(request: Request, { params }: Params) {
               estado: 'PENDIENTE',
             }
           })
-          if (esPorEquipos) await asegurarDetallesEncuentro(tx, creado.id)
+          if (esPorEquipos) await asegurarDetallesEncuentro(tx, creado.id, !!torneo?.liga)
           creados.push({ id: creado.id })
         }
         rondas.push(creados); partidosRonda /= 2; ronda++

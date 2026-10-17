@@ -135,6 +135,9 @@ model torneos {
   // Clase "Sub 21": los resultados del torneo NO afectan el ELO/ranking
   // (no se invoca el SP procesar_partido ni su reverso).
   sub21                Boolean                @default(false)
+  // Liga: torneo EQUIPOS con 2 grupos, calendario por fechas, encuentros de
+  // 7 juegos (a 4) y final entre los primeros de cada grupo.
+  liga                 Boolean                @default(false)
   historial_categorias historial_categorias[]
   jugadores            jugadores[]
   participaciones      participaciones[]
@@ -240,7 +243,9 @@ model torneo_partidos_programados {
   // cada grupo (1 = clasificados 1ros "Oro", 2 = 2dos "Plata", 3 = 3ros
   // "Bronce"). En las demás modalidades queda NULL.
   nivel_llave               Int?
-  siguiente_partido_id      Int?
+  // Solo Liga: número de fecha del calendario (1 = primera fecha).
+  fecha_numero              Int?
+  siguiente_partido_id     Int?
   siguiente_lado            lado_partido?
   ganador_participante_id   Int?
   sets_local                Int                    @default(0)

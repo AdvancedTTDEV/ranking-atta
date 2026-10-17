@@ -19,22 +19,38 @@ import prisma from '@/lib/prisma'
 const TTL_MS = 60_000
 const cacheAutorizacion = new Map<string, { autorizado: boolean; expira: number }>()
 
+// La BD serverless puede estar dormida: reintenta con espera creciente
+// (1s, 2s, 3s entre 4 intentos). Si sigue fallando, relanza el último error.
+export async function conReintentos<T>(fn: () => Promise<T>, intentos = 4, baseMs = 1000): Promise<T> {
+    for (let i = 1; ; i++) {
+        try {
+            return await fn()
+        } catch (err) {
+            if (i >= intentos) throw err
+            await new Promise((r) => setTimeout(r, baseMs * i))
+        }
+    }
+}
+
 export async function estaAutorizado(email: string | null | undefined): Promise<boolean> {
     if (!email) return false
     const clave = email.toLowerCase()
     const cached = cacheAutorizacion.get(clave)
     if (cached && cached.expira > Date.now()) return cached.autorizado
 
+    // Falla cerrado: si tras los reintentos hay error, se propaga y no se cachea.
     let autorizado: boolean
-    const totalUsuarios = await prisma.usuarios_app.count()
+    const totalUsuarios = await conReintentos(() => prisma.usuarios_app.count())
     if (totalUsuarios === 0) {
         // Modo abierto: nadie cargó la lista de autorizados todavía.
         autorizado = true
     } else {
-        const usuario = await prisma.usuarios_app.findFirst({
-            where: { email: clave, activo: true },
-            select: { id: true, rol: true },
-        })
+        const usuario = await conReintentos(() =>
+            prisma.usuarios_app.findFirst({
+                where: { email: clave, activo: true },
+                select: { id: true, rol: true },
+            }),
+        )
         autorizado = Boolean(usuario)
     }
 
@@ -101,7 +117,13 @@ export const authOptions: NextAuthOptions = {
     },
     callbacks: {
         async signIn({ user }) {
-            return estaAutorizado(user.email)
+            try {
+                return await estaAutorizado(user.email)
+            } catch (err) {
+                // BD dormida/caída: no se deja entrar; next-auth redirige a esta URL.
+                console.error('signIn: no se pudo verificar la lista de autorizados', err)
+                return '/?error=bd_dormida'
+            }
         },
         async jwt({ token, user }) {
             if (user?.email) {
@@ -113,7 +135,8 @@ export const authOptions: NextAuthOptions = {
                     token.rol = usuario.rol as 'ADMIN' | 'OPERADOR' | 'LECTURA'
                 } else {
                     // Modo abierto (tabla vacía): todos entran como ADMIN.
-                    const modoAbierto = (await prisma.usuarios_app.count()) === 0
+                    // Solo si el count tuvo éxito y dio 0; ante error, rol null.
+                    const modoAbierto = (await prisma.usuarios_app.count().catch(() => -1)) === 0
                     token.rol = modoAbierto ? 'ADMIN' : null
                 }
             }
